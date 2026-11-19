@@ -1,0 +1,73 @@
+<!DOCTYPE html>
+<html lang="it">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="color-scheme" content="light">
+  <meta name="theme-color" content="#12635d">
+  <title>Pressione 2.0 · Diario pressorio</title>
+  <meta name="description" content="Diario pressorio personale: leggi i valori dalla foto del misuratore, registra data e ora e stampa un report chiaro per il medico. I dati sono tuoi.">
+  <meta name="author" content="Pressione 2.0">
+  <meta name="robots" content="noindex,nofollow">
+
+  <link rel="manifest" href="manifest.webmanifest">
+  <link rel="icon" href="icons/icon.svg" type="image/svg+xml">
+  <link rel="icon" href="icons/icon-192.png" type="image/png" sizes="192x192">
+  <link rel="apple-touch-icon" href="icons/apple-touch-icon.png">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="default">
+  <meta name="apple-mobile-web-app-title" content="Pressione 2.0">
+  <meta name="mobile-web-app-capable" content="yes">
+  <meta property="og:title" content="Pressione 2.0 · Diario pressorio">
+  <meta property="og:description" content="Misura, fotografa il display, porta il report al medico.">
+  <meta property="og:type" content="website">
+
+  <link rel="preconnect" href="https://cdn.jsdelivr.net" crossorigin>
+  <link rel="stylesheet" href="css/style.css?v=2.0.2">
+</head>
+<body>
+  <div id="app">
+    <div class="boot-screen" aria-hidden="true">
+      <span class="boot-mark">
+        <svg viewBox="0 0 48 48" fill="none" width="34" height="34">
+          <path d="M24 42S6 30.5 6 18.2A9.8 9.8 0 0 1 24 12a9.8 9.8 0 0 1 18 6.2C42 30.5 24 42 24 42z" fill="currentColor"/>
+          <path d="M10 24h8.2l3-6.4 5.2 13 3-6.6H38" stroke="#fff" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"/>
+        </svg>
+      </span>
+      <span>Pressione 2.0</span>
+    </div>
+  </div>
+
+  <div id="toast-root" role="status" aria-live="polite"></div>
+  <div id="modal-root"></div>
+  <div id="print-doc" aria-hidden="true"></div>
+  <input type="file" id="import-input" accept=".json,application/json,text/plain" hidden>
+
+  <noscript>
+    <div class="noscript-box">
+      <h1>Serve JavaScript</h1>
+      <p>Pressione 2.0 funziona interamente nel browser. Attiva JavaScript per usare il diario, la lettura dalla foto e il report.</p>
+    </div>
+  </noscript>
+
+  <!-- Moduli: l'ordine di caricamento è importante (namespace DP). -->
+  <script src="js/config.js?v=2.0.2"></script>
+  <script src="js/format.js?v=2.0.2"></script>
+  <script src="js/ocr-parse.js?v=2.0.2"></script>
+  <script src="js/stats.js?v=2.0.2"></script>
+  <script src="js/store.js?v=2.0.2"></script>
+  <script src="js/cloud.js?v=2.0.2"></script>
+  <script src="js/chart.js?v=2.0.2"></script>
+  <script src="js/ocr.js?v=2.0.2"></script>
+  <script src="js/supabase-config.js?v=2.0.2"></script>
+  <script src="js/ui/common.js?v=2.0.2"></script>
+  <script src="js/ui/onboarding.js?v=2.0.2"></script>
+  <script src="js/ui/auth.js?v=2.0.2"></script>
+  <script src="js/ui/entry.js?v=2.0.2"></script>
+  <script src="js/ui/dashboard.js?v=2.0.2"></script>
+  <script src="js/ui/diary.js?v=2.0.2"></script>
+  <script src="js/ui/report.js?v=2.0.2"></script>
+  <script src="js/ui/settings.js?v=2.0.2"></script>
+  <script src="js/app.js?v=2.0.2"></script>
+</body>
+</html>

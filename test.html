@@ -1,0 +1,443 @@
+<!DOCTYPE html>
+<html lang="it">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="theme-color" content="#12635d">
+  <title>Test · Pressione 2.0</title>
+  <style>
+    :root {
+      --bg: #f2f5f1; --surface: #fff; --ink: #12302e; --muted: #5e7472;
+      --line: rgba(18, 48, 46, 0.14); --primary: #12635d; --green: #2c7a5b;
+      --red: #b23b2c; --amber: #a96a16;
+      font-family: "Segoe UI", system-ui, -apple-system, sans-serif;
+    }
+    * { box-sizing: border-box; }
+    body { margin: 0; background: var(--bg); color: var(--ink); font-size: 15px; line-height: 1.5; }
+    .wrap { max-width: 860px; margin: 0 auto; padding: 34px 18px 70px; }
+    header { display: flex; align-items: flex-end; justify-content: space-between; gap: 16px; flex-wrap: wrap; margin-bottom: 20px; }
+    h1 { margin: 0; font-size: 1.7rem; letter-spacing: -0.03em; }
+    .sub { color: var(--muted); font-size: 13px; margin-top: 4px; }
+    a { color: var(--primary); }
+    .summary { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; padding: 16px 18px; border-radius: 16px; background: var(--surface); border: 1px solid var(--line); margin-bottom: 18px; box-shadow: 0 8px 24px rgba(12,42,39,.05); }
+    .summary b { font-size: 1.5rem; }
+    .pill { display: inline-flex; align-items: center; padding: 3px 10px; border-radius: 999px; font-size: 12px; font-weight: 700; }
+    .pill-ok { background: #e6f2ec; color: var(--green); }
+    .pill-fail { background: #fbe9e6; color: var(--red); }
+    .bar { height: 8px; flex: 1 1 180px; border-radius: 999px; background: #e4ebe5; overflow: hidden; }
+    .bar span { display: block; height: 100%; background: linear-gradient(90deg, var(--primary), #4fa58f); }
+    .result { display: flex; align-items: flex-start; gap: 10px; padding: 11px 14px; border-radius: 12px; background: var(--surface); border: 1px solid var(--line); margin-bottom: 7px; }
+    .mark { width: 22px; height: 22px; flex: 0 0 auto; border-radius: 50%; display: grid; place-items: center; font-size: 12px; font-weight: 800; margin-top: 1px; }
+    .ok .mark { background: #e6f2ec; color: var(--green); }
+    .ko .mark { background: #fbe9e6; color: var(--red); }
+    .result b { font-size: 13.5px; font-weight: 650; display: block; }
+    .result pre { margin: 5px 0 0; padding: 8px; border-radius: 8px; background: #fbe9e6; color: #8d2c20; font-size: 11.5px; white-space: pre-wrap; }
+    .empty { color: var(--muted); }
+    .note { margin-top: 20px; font-size: 11.5px; color: var(--muted); text-align: center; }
+    @media (max-width: 520px) { header { flex-direction: column; align-items: flex-start; } }
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <header>
+      <div>
+        <h1>Test di Pressione 2.0</h1>
+        <p class="sub">Parser OCR, validazione, statistiche, importazione e archivio locale. Nessun dato reale viene toccato.</p>
+      </div>
+      <a href="index.html">← Torna all’app</a>
+    </header>
+    <div class="summary" id="summary">
+      <b id="pass-count">0</b><span class="pill pill-ok" id="pass-pill">passati</span>
+      <b id="fail-count">0</b><span class="pill pill-fail" id="fail-pill">falliti</span>
+      <div class="bar"><span id="bar" style="width:0%"></span></div>
+    </div>
+    <div id="results"><p class="empty">Esecuzione dei test…</p></div>
+    <p class="note">I test dell’archivio usano la chiave <code>dp2_test_state_v1</code>, separata dal diario personale.</p>
+  </div>
+
+  <script src="js/config.js"></script>
+  <script>
+    // Isola completamente i test dal diario reale.
+    DP.CONFIG.storageKey = 'dp2_test_state_v1';
+    DP.CONFIG.cloudConfigKey = 'dp2_test_cloud_config';
+    try { localStorage.removeItem('dp2_test_state_v1'); } catch (e) { /* ignore */ }
+  </script>
+  <script src="js/format.js"></script>
+  <script src="js/ocr-parse.js"></script>
+  <script src="js/stats.js"></script>
+  <script src="js/store.js"></script>
+  <script>
+  (function () {
+    const tests = [];
+    const results = [];
+    const esc = DP.Fmt.escapeHtml;
+
+    function test(name, fn) { tests.push({ name: name, fn: fn }); }
+
+    function fail(message) { throw new Error(message || 'Test fallito'); }
+    function ok(cond, message) { if (!cond) fail(message || 'Condizione falsa'); }
+    function eq(actual, expected, label) {
+      if (!Object.is(actual, expected)) {
+        fail((label ? label + ': ' : '') + 'atteso ' + JSON.stringify(expected) +
+          ', ottenuto ' + JSON.stringify(actual));
+      }
+    }
+    function includes(text, part, label) {
+      if (String(text || '').indexOf(part) < 0) {
+        fail((label ? label + ': ' : '') + 'manca «' + part + '» in ' + JSON.stringify(String(text).slice(0, 160)));
+      }
+    }
+    function pad2(n) { return String(n).padStart(2, '0'); }
+    function todayAt(h, m) {
+      return DP.Fmt.todayKey() + 'T' + pad2(h) + ':' + pad2(m);
+    }
+    function uuid() { return DP.Fmt.uid(); }
+
+    // ---------- formato ----------
+    test('format: nowLocal e parseLocal sono coerenti', function () {
+      const at = DP.Fmt.nowLocal();
+      eq(DP.Fmt.nowLocal(DP.Fmt.parseLocal(at)), at);
+      eq(DP.Fmt.dateKey(at), at.slice(0, 10));
+    });
+
+    test('format: addDaysKey attraversa il mese e l’anno', function () {
+      eq(DP.Fmt.addDaysKey('2026-11-30', 1), '2026-12-01');
+      eq(DP.Fmt.addDaysKey('2026-12-31', 1), '2027-01-01');
+      eq(DP.Fmt.addDaysKey('2026-03-01', -1), '2026-02-28');
+      eq(DP.Fmt.daysBetweenKeys('2026-11-01', '2026-11-18'), 17);
+    });
+
+    test('format: UUID e ID stabile', function () {
+      const a = DP.Fmt.stableId('stesso-backup|120|80');
+      const b = DP.Fmt.stableId('stesso-backup|120|80');
+      const c = DP.Fmt.stableId('altro-backup|120|80');
+      ok(DP.Fmt.isUuid(DP.Fmt.uid()), 'uid() deve essere un UUID');
+      ok(DP.Fmt.isUuid(a), 'stableId() deve avere formato UUID');
+      eq(a, b, 'lo stesso seme deve dare lo stesso ID');
+      ok(a !== c, 'semi diversi devono dare ID diversi');
+    });
+
+    test('format: csvCell protegge separatore e virgolette', function () {
+      eq(DP.Fmt.csvCell('normale'), 'normale');
+      eq(DP.Fmt.csvCell('a;b'), '"a;b"');
+      eq(DP.Fmt.csvCell('a"b'), '"a""b"');
+    });
+
+    // ---------- parser OCR ----------
+    test('OCR: etichette su una riga', function () {
+      const p = DP.OCRParser.parse('SYS 120 DIA 80 PUL 72');
+      eq(p.sys, 120, 'massima');
+      eq(p.dia, 80, 'minima');
+      eq(p.pulse, 72, 'polso');
+      eq(p.confidence, 'high', 'confidenza');
+    });
+
+    test('OCR: etichette e numeri su righe alternate', function () {
+      const p = DP.OCRParser.parse('SYS\n120\nDIA\n80\nPUL\n72');
+      eq(p.sys, 120, 'massima');
+      eq(p.dia, 80, 'minima');
+      eq(p.pulse, 72, 'polso');
+    });
+
+    test('OCR: intestazione SYS DIA PUL sopra i tre numeri', function () {
+      const p = DP.OCRParser.parse('SYS DIA PUL\n120\n80\n72');
+      eq(p.sys, 120, 'massima');
+      eq(p.dia, 80, 'minima');
+      eq(p.pulse, 72, 'polso');
+    });
+
+    test('OCR: formato 120/80 con polso in bpm', function () {
+      const p = DP.OCRParser.parse('120/80 72 bpm');
+      eq(p.sys, 120, 'massima');
+      eq(p.dia, 80, 'minima');
+      eq(p.pulse, 72, 'polso');
+      eq(p.confidence, 'high', 'confidenza');
+    });
+
+    test('OCR: confusione O/0 e S/5', function () {
+      const p = DP.OCRParser.parse('SYS 12O DIA 8O PUL 7S');
+      eq(p.sys, 120, 'massima');
+      eq(p.dia, 80, 'minima');
+      eq(p.pulse, 75, 'polso');
+    });
+
+    test('OCR: coppia senza etichette', function () {
+      const p = DP.OCRParser.parse('12O 8O');
+      eq(p.sys, 120, 'massima');
+      eq(p.dia, 80, 'minima');
+      ok(p.pulse === null, 'non deve inventare il polso');
+    });
+
+    test('OCR: ignora data e ora nel display', function () {
+      const p = DP.OCRParser.parse('2026-11-18 08:15 SYS 135 DIA 85 PUL 70');
+      eq(p.sys, 135, 'massima');
+      eq(p.dia, 85, 'minima');
+      eq(p.pulse, 70, 'polso');
+    });
+
+    test('OCR: PULSE/MIN non confonde MIN con la minima', function () {
+      const p = DP.OCRParser.parse('PULSE/MIN 72');
+      eq(p.pulse, 72, 'polso');
+      ok(p.dia === null, 'la minima non deve essere 72');
+    });
+
+    test('OCR: battito irregolare', function () {
+      const p = DP.OCRParser.parse('SYS 120 DIA 80 PUL 72 IHB');
+      eq(p.irregular, true);
+    });
+
+    test('OCR: testo vuoto o illeggibile', function () {
+      const a = DP.OCRParser.parse('');
+      eq(a.sys, null); eq(a.dia, null); eq(a.confidence, 'none');
+      const b = DP.OCRParser.parse('08:15 18/11/2026');
+      eq(b.sys, null); eq(b.dia, null);
+    });
+
+    test('OCR: numericValue gestisce errori tipici', function () {
+      eq(DP.OCRParser.numericValue('12O'), 120);
+      eq(DP.OCRParser.numericValue('8O'), 80);
+      eq(DP.OCRParser.numericValue('72'), 72);
+      eq(DP.OCRParser.numericValue('12.3'), null);
+      eq(DP.OCRParser.numericValue('A1'), null);
+    });
+
+    // ---------- validazione ----------
+    test('validazione: campi obbligatori', function () {
+      const v = DP.Stats.validateReading({ sys: '', dia: '80', pulse: '', at: DP.Fmt.nowLocal() });
+      eq(v.ok, false);
+      ok(!!v.errors.sys, 'deve segnalare la massima mancante');
+    });
+
+    test('validazione: massima maggiore della minima', function () {
+      const v = DP.Stats.validateReading({ sys: '80', dia: '90', pulse: '', at: DP.Fmt.nowLocal() });
+      eq(v.ok, false);
+      ok(!!v.errors.dia, 'deve segnalare l’ordine dei valori');
+    });
+
+    test('validazione: limiti di massima, minima e polso', function () {
+      ok(!DP.Stats.validateReading({ sys: '20', dia: '10', pulse: '', at: DP.Fmt.nowLocal() }).ok);
+      ok(!DP.Stats.validateReading({ sys: '120', dia: '80', pulse: '300', at: DP.Fmt.nowLocal() }).ok);
+      ok(!DP.Stats.validateReading({ sys: '120', dia: '80', pulse: '', at: 'non-una-data' }).ok);
+    });
+
+    test('validazione: valore corretto e fonte foto', function () {
+      const v = DP.Stats.validateReading({
+        sys: '120', dia: '80', pulse: '72', at: DP.Fmt.nowLocal(),
+        source: 'photo', note: '  prova  ', arm: 'sx', posture: 'seduto', irregular: true
+      });
+      eq(v.ok, true);
+      eq(v.value.sys, 120);
+      eq(v.value.dia, 80);
+      eq(v.value.pulse, 72);
+      eq(v.value.source, 'photo');
+      eq(v.value.note, 'prova');
+      eq(v.value.arm, 'sx');
+      eq(v.value.irregular, true);
+    });
+
+    test('validazione: avviso per data nel futuro', function () {
+      const future = DP.Fmt.nowLocal(new Date(Date.now() + 2 * 86400000));
+      const v = DP.Stats.validateReading({ sys: '120', dia: '80', at: future });
+      eq(v.ok, true);
+      ok(v.warnings.some(function (w) { return /futuro/i.test(w); }), 'deve avvisare sulla data futura');
+    });
+
+    // ---------- categorie e statistiche ----------
+    const target = { sys: 135, dia: 85 };
+    const limits = { sysLow: 90, diaLow: 60, pulseLow: 50, pulseHigh: 100 };
+
+    test('categorie: normale, alta, molto alta, bassa', function () {
+      eq(DP.Stats.category({ sys: 120, dia: 75 }, target, limits).key, 'normal');
+      eq(DP.Stats.category({ sys: 140, dia: 80 }, target, limits).key, 'high');
+      eq(DP.Stats.category({ sys: 185, dia: 125 }, target, limits).key, 'critical');
+      eq(DP.Stats.category({ sys: 85, dia: 70 }, target, limits).key, 'low');
+    });
+
+    test('avvisi: target e valori critici', function () {
+      const high = DP.Stats.warnings({ sys: 150, dia: 80, pulse: 70 }, target, limits);
+      ok(high.length >= 1 && high[0].tone === 'high', 'deve avvisare sul target');
+      includes(high[0].text, '135', 'target massima nel testo');
+      const critical = DP.Stats.warnings({ sys: 185, dia: 125, pulse: 90 }, target, limits);
+      eq(critical[0].tone, 'critical');
+      const pulse = DP.Stats.warnings({ sys: 120, dia: 75, pulse: 120 }, target, limits);
+      ok(pulse.some(function (w) { return w.tone === 'pulse'; }), 'deve avvisare sul polso alto');
+    });
+
+    test('statistiche: medie, giorni e percentuali', function () {
+      const list = [
+        { id: uuid(), at: todayAt(8, 0), sys: 120, dia: 80, pulse: 70 },
+        { id: uuid(), at: todayAt(20, 0), sys: 150, dia: 90, pulse: 80 }
+      ];
+      const s = DP.Stats.summarize(list, target, limits);
+      eq(s.count, 2);
+      eq(s.days, 1);
+      eq(s.avg.sys, 135);
+      eq(s.avg.dia, 85);
+      eq(s.avg.pulse, 75);
+      eq(s.normal, 1);
+      eq(s.high, 1);
+      eq(s.above, 1);
+      eq(s.percentNormal, 50);
+      eq(s.morning.count, 1);
+      eq(s.evening.count, 1);
+    });
+
+    test('statistiche: filtro per periodo', function () {
+      const list = [
+        { id: uuid(), at: DP.Fmt.addDaysKey(DP.Fmt.todayKey(), -40) + 'T08:00', sys: 130, dia: 80, pulse: 70 },
+        { id: uuid(), at: todayAt(8, 0), sys: 120, dia: 78, pulse: 68 }
+      ];
+      eq(DP.Stats.filterPeriod(list, { days: 30 }).length, 1);
+      eq(DP.Stats.filterPeriod(list, { days: 0 }).length, 2);
+    });
+
+    test('statistiche: unione con la misurazione più recente', function () {
+      const base = {
+        id: uuid(), at: '2026-11-01T08:00', sys: 120, dia: 80, pulse: 70,
+        createdAt: '2026-11-01T07:00:00.000Z', updatedAt: '2026-11-01T07:00:00.000Z'
+      };
+      const newer = Object.assign({}, base, { sys: 130, updatedAt: '2026-11-02T07:00:00.000Z' });
+      const older = Object.assign({}, base, { sys: 110, updatedAt: '2026-10-01T07:00:00.000Z' });
+      eq(DP.Stats.mergeReadings([base], [newer])[0].sys, 130);
+      eq(DP.Stats.mergeReadings([base], [older])[0].sys, 120);
+    });
+
+    test('statistiche: reportModel e testo riepilogo', function () {
+      const list = [
+        { id: uuid(), at: DP.Fmt.todayKey() + 'T08:00', sys: 120, dia: 80, pulse: 70 },
+        { id: uuid(), at: DP.Fmt.todayKey() + 'T20:00', sys: 150, dia: 90, pulse: 80 }
+      ];
+      const m = DP.Stats.reportModel(list, {
+        period: { days: 7 }, target: target, limits: limits, name: 'Mario Rossi'
+      });
+      eq(m.summary.count, 2);
+      eq(m.name, 'Mario Rossi');
+      includes(m.periodLabel, '7');
+      const text = DP.Stats.summaryText(m);
+      includes(text, 'Mario Rossi');
+      includes(text, 'Media: 135/85');
+    });
+
+    test('esportazione: CSV con BOM, intestazione e note', function () {
+      const csv = DP.Stats.csv([
+        { id: uuid(), at: '2026-11-18T08:00', sys: 120, dia: 80, pulse: 70, note: 'prova; nota' }
+      ]);
+      eq(csv.charCodeAt(0), 0xFEFF);
+      includes(csv, 'Data;Ora;Massima (mmHg);Minima (mmHg)');
+      includes(csv, '120;80;70');
+      includes(csv, '"prova; nota"');
+    });
+
+    test('importazione Android: misurazione e impostazioni', function () {
+      const conv = DP.Stats.fromAndroidBackup({
+        misurazioni: [{
+          id: 42, timestamp: '2026-11-17T07:30:00.000Z',
+          systolic: 130, diastolic: 85, pulse: 68
+        }],
+        impostazioni: { sysHigh: 140, diaHigh: 90, sysLow: 95, diaLow: 65, pulseLow: 50, pulseHigh: 100 }
+      });
+      eq(conv.readings.length, 1);
+      eq(conv.readings[0].sys, 130);
+      eq(conv.readings[0].dia, 85);
+      eq(conv.profile.target.sys, 140);
+      eq(conv.profile.limits.diaLow, 65);
+    });
+
+    // ---------- archivio locale ----------
+    test('archivio: aggiunta, modifica ed eliminazione logica', function () {
+      DP.Store.clearAll({ keepProfile: false });
+      const r = DP.Store.addReading({
+        at: '2026-11-18T08:00', sys: 120, dia: 80, pulse: 70, source: 'manual'
+      });
+      eq(DP.Store.readings().length, 1);
+      DP.Store.updateReading(r.id, { sys: 125, note: 'corretta' });
+      eq(DP.Store.getReading(r.id).sys, 125);
+      eq(DP.Store.getReading(r.id).note, 'corretta');
+      DP.Store.deleteReading(r.id);
+      eq(DP.Store.readings().length, 0, 'le attive non includono le cancellate');
+      eq(DP.Store.allReadings().length, 1, 'la tombstone resta per il sync');
+      eq(DP.Store.allReadings()[0].deleted, true);
+    });
+
+    test('archivio: esporta e reimporta il backup', function () {
+      DP.Store.clearAll({ keepProfile: false });
+      DP.Store.setOnboarded('Mario Rossi');
+      DP.Store.addReading({ at: '2026-11-18T08:00', sys: 120, dia: 80, pulse: 70 });
+      const backup = DP.Store.exportBackup();
+      eq(backup.readings.length, 1);
+      DP.Store.clearAll({ keepProfile: false });
+      const res = DP.Store.importBackup(backup);
+      eq(res.ok, true);
+      eq(DP.Store.readings().length, 1);
+      eq(DP.Store.profile().name, 'Mario Rossi');
+    });
+
+    test('archivio: reimportare lo stesso backup Android non crea doppioni', function () {
+      DP.Store.clearAll({ keepProfile: false });
+      const android = {
+        misurazioni: [{
+          id: 42, timestamp: '2026-11-17T07:30:00.000Z',
+          systolic: 130, diastolic: 85, pulse: 68
+        }],
+        impostazioni: { sysHigh: 140, diaHigh: 90 }
+      };
+      const first = DP.Store.importBackup(android);
+      eq(first.ok, true);
+      eq(DP.Store.readings().length, 1);
+      const second = DP.Store.importBackup(android);
+      eq(second.ok, true);
+      eq(second.added, 0);
+      eq(DP.Store.readings().length, 1);
+    });
+
+    test('archivio: ordinamento dal più recente', function () {
+      DP.Store.clearAll({ keepProfile: false });
+      DP.Store.addReading({ at: '2026-11-18T08:00', sys: 120, dia: 80, pulse: 70 });
+      DP.Store.addReading({ at: '2026-11-18T20:00', sys: 130, dia: 85, pulse: 72 });
+      eq(DP.Store.readings()[0].at, '2026-11-18T20:00');
+      eq(DP.Store.readings()[1].at, '2026-11-18T08:00');
+    });
+
+    // ---------- esecuzione ----------
+    function run() {
+      tests.forEach(function (t) {
+        try {
+          t.fn();
+          results.push({ name: t.name, ok: true });
+        } catch (e) {
+          results.push({ name: t.name, ok: false, error: e && e.message ? e.message : String(e) });
+        }
+      });
+      // Non lasciare dati di prova nel browser.
+      try { DP.Store.clearAll({ keepProfile: false }); } catch (e) { /* ignore */ }
+      try { localStorage.removeItem('dp2_test_state_v1'); } catch (e) { /* ignore */ }
+
+      const passed = results.filter(function (r) { return r.ok; }).length;
+      const failed = results.length - passed;
+      document.getElementById('pass-count').textContent = passed;
+      document.getElementById('fail-count').textContent = failed;
+      document.getElementById('bar').style.width = Math.round((passed / results.length) * 100) + '%';
+      document.getElementById('pass-pill').textContent = 'passati su ' + results.length;
+      document.getElementById('fail-pill').textContent = failed ? 'falliti' : 'nessun errore';
+
+      const root = document.getElementById('results');
+      root.innerHTML = results.map(function (r) {
+        return '<div class="result ' + (r.ok ? 'ok' : 'ko') + '">' +
+          '<span class="mark">' + (r.ok ? '✓' : '!') + '</span>' +
+          '<div><b>' + esc(r.name) + '</b>' +
+          (r.ok ? '' : '<pre>' + esc(r.error) + '</pre>') +
+          '</div></div>';
+      }).join('');
+
+      if (failed) {
+        document.title = '⚠ ' + failed + ' test falliti · Pressione 2.0';
+      } else {
+        document.title = '✓ Tutti i test passati · Pressione 2.0';
+      }
+    }
+
+    run();
+  })();
+  </script>
+</body>
+</html>

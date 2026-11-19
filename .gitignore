@@ -1,0 +1,15 @@
+# File di sistema
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# Editor
+.vscode/
+.idea/
+
+# Non pubblicare mai chiavi private o backup personali
+*.service_role*
+*.env
+.env
+backup-*.json
+pressione-*.json
