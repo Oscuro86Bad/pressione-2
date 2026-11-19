@@ -68,26 +68,24 @@ Il server è solo per lo sviluppo: non pubblica nulla su internet.
 
 ## Pubblicazione su GitHub Pages
 
-Il repository include già il workflow `.github/workflows/deploy.yml`: a ogni push su `main` il sito viene pubblicato automaticamente.
+Il sito è **già online** su **https://oscuro86bad.github.io/pressione-2/**.
 
-1. Crea un repository pubblico chiamato **`pressione-2`** sull’account `Oscuro86Bad`.
-2. Carica il progetto:
+La pubblicazione usa GitHub Pages con origine dal branch `main` (cartella principale):
 
-   ```powershell
-   cd "C:\Users\Rudi\Downloads\Pressione 2.0"
-   git init
-   git add .
-   git commit -m "Pressione 2.0: diario pressorio PWA"
-   git branch -M main
-   git remote add origin https://github.com/Oscuro86Bad/pressione-2.git
-   git push -u origin main
-   ```
+1. Su GitHub: **Settings → Pages → Build and deployment**.
+2. **Source: Deploy from a branch**.
+3. **Branch: `main`** e cartella **`/ (root)`**.
 
-3. Su GitHub: **Settings → Pages → Build and deployment → Source: GitHub Actions**.
-4. Attendi la fine del workflow **“Pubblica Pressione 2.0 su GitHub Pages”** nella scheda **Actions**.
-5. Apri **https://oscuro86bad.github.io/pressione-2/**.
+Ogni push su `main` aggiorna l’app online in circa un minuto. Per pubblicare una modifica:
 
-Se il workflow non parte, controlla che il repository sia pubblico e che in **Settings → Actions → General** sia consentito eseguire i workflow.
+```powershell
+cd "C:\Users\Rudi\Downloads\Pressione 2.0"
+git add .
+git commit -m "Descrizione della modifica"
+git push
+```
+
+> Se in futuro vuoi passare a GitHub Actions, aggiungi un workflow in `.github/workflows/` e imposta **Source: GitHub Actions**. Il token GitHub deve avere anche lo scope `workflow` (`gh auth refresh -h github.com -s workflow`).
 
 ## 🔐 Sincronizzazione online (Supabase)
 
