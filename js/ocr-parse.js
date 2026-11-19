@@ -31,7 +31,8 @@ DP.OCRParser = (function () {
     {
       kind: 'pul',
       words: ['PUL', 'PULS', 'PULSE', 'PULSES', 'PULSAZIONI', 'PULSAZIONE',
-        'BPM', 'HR', 'FC', 'FREQ', 'FREQUENZA', 'BATTITI', 'BATTITO', 'PU1', 'PUI']
+        'BPM', 'HR', 'FC', 'FREQ', 'FREQUENZA', 'BATTITI', 'BATTITO',
+        'BATTITI/MIN', 'PUL/MIN', 'PU1', 'PUI']
     }
   ];
 
@@ -97,6 +98,46 @@ DP.OCRParser = (function () {
     return Number.isFinite(n) ? n : null;
   }
 
+  // L'OCR a volte incolla più valori vicini: "13888" = 138/88,
+  // "120080" = 120/80, "1208076" = 120/80/76. Separa solo se il
+  // risultato è plausibile.
+  function splitMergedDigits(raw) {
+    const s = String(raw || '');
+    if (!/^\d{4,7}$/.test(s)) return null;
+    const patterns = {
+      4: [[2, 2]],
+      5: [[3, 2]],
+      6: [[3, 3], [3, 2, 1]],
+      7: [[3, 2, 2], [3, 3, 1]]
+    };
+    const list = patterns[s.length] || [];
+    for (let p = 0; p < list.length; p++) {
+      const sizes = list[p];
+      const parts = [];
+      let pos = 0;
+      let valid = true;
+      for (let i = 0; i < sizes.length; i++) {
+        const piece = s.slice(pos, pos + sizes[i]);
+        pos += sizes[i];
+        const value = numericValue(piece);
+        if (value === null) {
+          // Un'ultima cifra isolata è il polso tagliato: la ignoriamo.
+          if (i >= 2 && piece.length === 1) continue;
+          valid = false;
+          break;
+        }
+        parts.push({ raw: piece, value: value });
+      }
+      if (!valid) continue;
+      const sys = parts[0].value;
+      const dia = parts[1] ? parts[1].value : null;
+      if (!inRange(sys, 'sys') || !inRange(dia, 'dia') || sys - dia < 10) continue;
+      if (parts[2] && !inRange(parts[2].value, 'pul')) continue;
+      return parts;
+    }
+    return null;
+  }
+
   // ---------- tokenizzazione ----------
   function tokenize(text) {
     const tokens = [];
@@ -159,7 +200,32 @@ DP.OCRParser = (function () {
         value: t.value
       });
     }
-    return out;
+
+    // Separa i valori incollati dall'OCR ("13888" -> 138, 88).
+    const expanded = [];
+    out.forEach(function (t) {
+      const split = t.value === null ? splitMergedDigits(t.raw) : null;
+      if (split) {
+        let pos = t.start;
+        split.forEach(function (part, i) {
+          expanded.push({
+            raw: part.raw,
+            start: pos,
+            end: pos + part.raw.length,
+            gap: i === 0 ? t.gap : '',
+            line: t.line,
+            index: expanded.length,
+            value: part.value,
+            merged: true
+          });
+          pos += part.raw.length;
+        });
+        return;
+      }
+      expanded.push(t);
+    });
+    expanded.forEach(function (t, i) { t.index = i; });
+    return expanded;
   }
 
   function labelKind(token, tokens, i) {
@@ -195,13 +261,13 @@ DP.OCRParser = (function () {
   }
 
   function findSlashPair(cleaned) {
-    const re = /(\d{2,3})\s*[\/\\]\s*(\d{2,3})/g;
+    const re = /(\d{2,3})\s*[\/\\|.\-–—]\s*(\d{2,3})/g;
     let m;
     while ((m = re.exec(cleaned))) {
       let a = parseInt(m[1], 10);
       let b = parseInt(m[2], 10);
       if (a < b) { const t = a; a = b; b = t; }
-      if (inRange(a, 'sys') && inRange(b, 'dia') && a - b >= 8) {
+      if (inRange(a, 'sys') && inRange(b, 'dia') && a - b >= 10) {
         return { sys: a, dia: b };
       }
     }
@@ -210,7 +276,7 @@ DP.OCRParser = (function () {
 
   function parse(input) {
     const rawText = Array.isArray(input) ? input.join('\n') : String(input || '');
-    const irregular = /(\bIRREG|\bIHB\b|\bAFIB\b|\bA-FIB\b|\bARITM|\bFIBRILL)/.test(
+    const irregular = /(\bIRREG|\bIHB\b|\bAFIB\b|\bA-FIB\b|\bARITM|\bFIBRILL|\bIRREGOLAR)/.test(
       rawText.toUpperCase()
     );
 
@@ -263,10 +329,12 @@ DP.OCRParser = (function () {
           const b = candidates[j].value;
           if (a <= b) continue;
           if (!inRange(a, 'sys') || !inRange(b, 'dia') || a - b < 8) continue;
-          const score = i * 100 +
-            Math.abs(a - 120) + Math.abs(b - 80) * 0.7 +
-            (j > i + 1 ? 30 : 0) +
-            (a < 85 ? 40 : 0) + (b < 40 ? 40 : 0);
+          const typical = Math.abs(a - 125) + Math.abs(b - 82) * 1.2;
+          const gap = a - b;
+          const gapPenalty = gap < 15 ? 70 : (gap > 90 ? 45 : 0);
+          const outPenalty = (a < 90 ? 70 : 0) + (b < 50 ? 70 : 0) +
+            (a > 190 ? 45 : 0) + (b > 110 ? 45 : 0);
+          const score = typical + gapPenalty + outPenalty + i * 8 + (j > i + 1 ? 25 : 0);
           pairs.push({
             sys: a, dia: b, score: score,
             sysIndex: candidates[i].index, diaIndex: candidates[j].index
@@ -295,10 +363,19 @@ DP.OCRParser = (function () {
         return t.value === values.dia && used.has(t.index);
       });
       if (diaToken) {
-        pick = candidates.find(function (t) { return t.index > diaToken.index; }) || null;
+        pick = candidates.find(function (t) {
+          return t.index > diaToken.index && t.value >= 35 && t.value <= 160;
+        }) || null;
       }
       if (!pick) {
-        pick = candidates.find(function (t) { return t.value >= 35 && t.value <= 200; }) || null;
+        pick = candidates.find(function (t) {
+          return t.value >= 40 && t.value <= 150 && t.value !== values.sys && t.value !== values.dia;
+        }) || null;
+      }
+      if (!pick) {
+        pick = candidates.find(function (t) {
+          return t.value >= 35 && t.value <= 200 && t.value !== values.sys && t.value !== values.dia;
+        }) || null;
       }
       if (!pick) pick = candidates[0] || null;
       if (pick) {

@@ -3,7 +3,7 @@
    App shell offline + cache dei moduli OCR da CDN.
    Cambiare SW_VERSION quando si aggiornano i file.
    ============================================================ */
-const SW_VERSION = '2.1.0-20261119';
+const SW_VERSION = '2.1.1-20261119';
 const APP_CACHE = 'dp2-app-' + SW_VERSION;
 const CDN_CACHE = 'dp2-cdn-v1';
 

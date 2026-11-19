@@ -201,6 +201,48 @@
       eq(DP.OCRParser.numericValue('A1'), null);
     });
 
+    test('OCR: valori incollati dall’OCR (13888, 120080)', function () {
+      const a = DP.OCRParser.parse('13888 76');
+      eq(a.sys, 138, 'massima da 5 cifre');
+      eq(a.dia, 88, 'minima da 5 cifre');
+      eq(a.pulse, 76, 'polso');
+      const b = DP.OCRParser.parse('120080');
+      eq(b.sys, 120, 'massima da 6 cifre');
+      eq(b.dia, 80, 'minima da 6 cifre');
+    });
+
+    test('OCR: separatori alternativi tra massima e minima', function () {
+      const a = DP.OCRParser.parse('SYS 138 - DIA 88');
+      eq(a.sys, 138, 'massima');
+      eq(a.dia, 88, 'minima');
+      const b = DP.OCRParser.parse('135.85 70');
+      eq(b.sys, 135, 'massima con punto');
+      eq(b.dia, 85, 'minima con punto');
+      eq(b.pulse, 70, 'polso');
+    });
+
+    test('OCR: etichette italiane e errori SYS/DIA/PUL', function () {
+      const a = DP.OCRParser.parse('MASSIMA 140 MINIMA 90');
+      eq(a.sys, 140, 'massima');
+      eq(a.dia, 90, 'minima');
+      const b = DP.OCRParser.parse('SVS 1O8 D1A 88 PU1 7S');
+      eq(b.sys, 108, 'massima con SVS');
+      eq(b.dia, 88, 'minima con D1A');
+      eq(b.pulse, 75, 'polso con PU1');
+    });
+
+    test('OCR: tre numeri senza etichette, anche con rumore', function () {
+      const a = DP.OCRParser.parse('120\n80\n72');
+      eq(a.sys, 120, 'massima');
+      eq(a.dia, 80, 'minima');
+      eq(a.pulse, 72, 'polso');
+      const b = DP.OCRParser.parse('137 86 74 118');
+      eq(b.sys, 137, 'massima');
+      eq(b.dia, 86, 'minima');
+      eq(b.pulse, 74, 'polso: non deve prendere 118');
+      ok(b.pulse !== b.sys && b.pulse !== b.dia, 'il polso non deve coincidere con massima o minima');
+    });
+
     // ---------- validazione ----------
     test('validazione: campi obbligatori', function () {
       const v = DP.Stats.validateReading({ sys: '', dia: '80', pulse: '', at: DP.Fmt.nowLocal() });
