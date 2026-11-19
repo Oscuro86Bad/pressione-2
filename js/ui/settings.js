@@ -70,7 +70,7 @@ DP.Views.settings = (function () {
     const lastSync = state.sync.lastSyncAt;
     return '<section class="card settings-card">' +
       '<div class="card-head"><div><h2>' + DP.UI.icon('download') + ' Dati e backup</h2>' +
-        '<p>I dati sono tuoi: esportali quando vuoi, anche senza account.</p></div></div>' +
+        '<p>I dati sono tuoi: esportali quando vuoi, anche senza sincronizzazione.</p></div></div>' +
       '<div class="data-stats">' +
         '<div><b>' + active + '</b><span>' + DP.Fmt.plural(active, 'misurazione', 'misurazioni') + ' sul dispositivo</span></div>' +
         '<div><b>' + (pending || 0) + '</b><span>' + DP.Fmt.plural(pending, 'modifica da sincronizzare', 'modifiche da sincronizzare') + '</span></div>' +
@@ -86,8 +86,8 @@ DP.Views.settings = (function () {
         '<div><b>Zona delicata</b><span>Le azioni qui sotto eliminano dati e non si possono annullare.</span></div>' +
         '<div class="btn-row btn-row-wrap">' +
           '<button type="button" class="btn btn-ghost btn-danger-ghost" data-action="clear-local">Cancella misurazioni locali</button>' +
-          (DP.Cloud.configured() && DP.Cloud.isSignedIn()
-            ? '<button type="button" class="btn btn-ghost btn-danger-ghost" data-action="clear-cloud">Elimina dati dal cloud</button>'
+          (DP.Cloud.configured()
+            ? '<button type="button" class="btn btn-ghost btn-danger-ghost" data-action="clear-cloud">Elimina dati da GitHub</button>'
             : '') +
         '</div>' +
       '</div>' +
@@ -107,7 +107,7 @@ DP.Views.settings = (function () {
         '<div class="privacy-row">' + DP.UI.icon('camera') +
           '<div><b>Le foto restano sul dispositivo</b><span>La lettura del display avviene con OCR nel browser. Nessuna immagine viene salvata o caricata.</span></div></div>' +
         '<div class="privacy-row">' + DP.UI.icon('cloud') +
-          '<div><b>Il cloud è facoltativo</b><span>Senza account i dati restano in questo browser. Con Supabase, ogni riga è protetta da Row Level Security e visibile solo al tuo account.</span></div></div>' +
+          '<div><b>Il cloud è facoltativo</b><span>Senza sincronizzazione i dati restano in questo browser. Con GitHub, il diario viene salvato in un repository privato e il token resta solo sul tuo dispositivo.</span></div></div>' +
         '<div class="privacy-row">' + DP.UI.icon('shield') +
           '<div><b>Non è un dispositivo medico</b><span>L’app non fa diagnosi e non sostituisce il medico. Non modificare la terapia in base ai valori letti.</span></div></div>' +
       '</div>' +
@@ -125,7 +125,7 @@ DP.Views.settings = (function () {
           DP.UI.icon('smartphone') + (standalone ? ' App installata' : ' Installa sul dispositivo') + '</button>' +
         '<a class="btn btn-ghost" href="' + esc(DP.CONFIG.repoUrl) + '" target="_blank" rel="noopener">' +
           DP.UI.icon('external') + ' Codice su GitHub</a>' +
-        '<a class="btn btn-ghost" href="' + esc(DP.CONFIG.repoUrl) + '#-sincronizzazione-online-supabase" target="_blank" rel="noopener">' +
+        '<a class="btn btn-ghost" href="' + esc(DP.CONFIG.repoUrl) + '#-sincronizzazione-con-github-privato" target="_blank" rel="noopener">' +
           DP.UI.icon('info') + ' Guida sincronizzazione</a>' +
         '<a class="btn btn-ghost" href="test.html" target="_blank" rel="noopener">' + DP.UI.icon('check') + ' Test dell’app</a>' +
       '</div>' +

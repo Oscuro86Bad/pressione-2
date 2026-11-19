@@ -4,8 +4,8 @@
    ============================================================ */
 window.DP = window.DP || {};
 
-DP.VERSION = '2.0.0';
-DP.BUILD = '2026-11-18';
+DP.VERSION = '2.1.0';
+DP.BUILD = '2026-11-19';
 
 DP.CONFIG = {
   appName: 'Pressione 2.0',
@@ -14,7 +14,17 @@ DP.CONFIG = {
 
   // Chiavi di archiviazione locale
   storageKey: 'dp2_state_v1',
-  cloudConfigKey: 'dp2_cloud_config_v1',
+  githubConfigKey: 'dp2_github_config_v1',
+
+  // Repository privato in cui salvare il diario (configurabile nell'app)
+  github: {
+    apiBase: 'https://api.github.com',
+    defaultRepo: 'pressione-dati',
+    defaultBranch: 'main',
+    defaultPath: 'diario.json',
+    repoUrl: 'https://github.com/new?name=pressione-dati&visibility=private',
+    tokenUrl: 'https://github.com/settings/personal-access-tokens/new'
+  },
 
   // Obiettivo personale predefinito (pressione misurata a casa: 135/85)
   target: { sys: 135, dia: 85 },
@@ -48,14 +58,7 @@ DP.CONFIG = {
     'Valori molto elevati. Se hai sintomi importanti (mal di testa forte, dolore al petto, difficoltà a respirare, disturbi alla vista) contatta subito il medico o i servizi di emergenza. Non modificare la terapia da solo.',
 
   methodNote:
-    'Misurazioni registrate dall’assistito con un misuratore da braccio. I valori sono inseriti manualmente o letti dalla foto del display e non sono stati validati da personale sanitario.',
-
-  // Supabase (le chiavi pubbliche possono stare nel frontend: RLS protegge i dati)
-  supabase: {
-    libUrl: 'https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.119.0/dist/umd/supabase.js',
-    settingsTable: 'bp_settings',
-    readingsTable: 'bp_readings'
-  }
+    'Misurazioni registrate dall’assistito con un misuratore da braccio. I valori sono inseriti manualmente o letti dalla foto del display e non sono stati validati da personale sanitario.'
 };
 
 DP.clone = function (value) {

@@ -7,8 +7,7 @@ desktop.ini
 .vscode/
 .idea/
 
-# Non pubblicare mai chiavi private o backup personali
-*.service_role*
+# Non pubblicare mai backup personali o credenziali
 *.env
 .env
 backup-*.json

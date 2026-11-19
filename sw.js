@@ -1,9 +1,9 @@
 /* ============================================================
    PRESSIONE 2.0 — service worker
-   App shell offline + cache dei moduli OCR/Supabase da CDN.
+   App shell offline + cache dei moduli OCR da CDN.
    Cambiare SW_VERSION quando si aggiornano i file.
    ============================================================ */
-const SW_VERSION = '2.0.2-20261118';
+const SW_VERSION = '2.1.0-20261119';
 const APP_CACHE = 'dp2-app-' + SW_VERSION;
 const CDN_CACHE = 'dp2-cdn-v1';
 
@@ -20,7 +20,6 @@ const APP_SHELL = [
   'js/cloud.js',
   'js/chart.js',
   'js/ocr.js',
-  'js/supabase-config.js',
   'js/ui/common.js',
   'js/ui/onboarding.js',
   'js/ui/auth.js',
@@ -34,8 +33,7 @@ const APP_SHELL = [
   'icons/icon-192.png',
   'icons/icon-512.png',
   'icons/maskable-512.png',
-  'icons/apple-touch-icon.png',
-  'supabase/schema.sql'
+  'icons/apple-touch-icon.png'
 ];
 
 self.addEventListener('install', function (event) {
@@ -122,7 +120,7 @@ self.addEventListener('fetch', function (event) {
   }
 
   // Librerie e dati OCR da jsDelivr: cache-first per l'uso offline.
-  // Supabase (API e auth) NON viene mai messo in cache: sono dati personali.
+  // Le API di GitHub non vengono mai messe in cache: contengono dati personali.
   if (url.hostname === 'cdn.jsdelivr.net') {
     event.respondWith(
       caches.match(request, { ignoreSearch: true }).then(function (cached) {

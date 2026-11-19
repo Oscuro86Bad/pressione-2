@@ -1,89 +1,131 @@
 /* ============================================================
-   PRESSIONE 2.0 — sincronizzazione Supabase
-   - Accesso con email + password
-   - Dati protetti da Row Level Security (ogni account vede solo i suoi)
-   - Cache locale + coda offline: le modifiche vengono inviate appena
-     torna la connessione.
-   - La chiave "anon" è pubblica per progetto: NON inserire mai la
-     service_role key nel frontend.
+   PRESSIONE 2.0 — sincronizzazione con un repository GitHub privato
+   - Il diario viene salvato in un unico file JSON (default diario.json)
+     dentro un repository privato dell'utente.
+   - Il token GitHub è un token "fine-grained" limitato a quel repository,
+     con permesso Contents: Read and write. Resta solo su questo dispositivo.
+   - Le foto non vengono mai incluse: viaggiano solo i valori del diario.
+   - Cache locale + merge per data di modifica: funziona anche offline e
+     invia le modifiche appena torna la connessione.
    ============================================================ */
 window.DP = window.DP || {};
 
 DP.Cloud = (function () {
-  const C = DP.CONFIG.supabase;
-  const TABLE_SETTINGS = C.settingsTable;
-  const TABLE_READINGS = C.readingsTable;
+  const API = 'https://api.github.com';
+  const G = DP.CONFIG.github;
+  const STORE_KEY = DP.CONFIG.githubConfigKey;
 
-  let client = null;
-  let libPromise = null;
-  let initPromise = null;
   let config = null;
-  let session = null;
-  let user = null;
+  let verified = null;
   let syncPromise = null;
   let syncAgain = false;
+  const statusListeners = [];
   let status = {
     state: 'local',
     message: 'Solo su questo dispositivo',
     lastSyncAt: null,
     error: ''
   };
-  const statusListeners = [];
-  const authListeners = [];
 
   // ---------- configurazione ----------
-  function readConfig() {
-    let local = null;
-    try {
-      const raw = window.localStorage.getItem(DP.CONFIG.cloudConfigKey);
-      if (raw) local = JSON.parse(raw);
-    } catch (e) { local = null; }
+  function cleanText(value) {
+    return String(value || '').trim();
+  }
 
-    const candidates = [local, window.DP_SUPABASE || null];
-    for (let i = 0; i < candidates.length; i++) {
-      const c = candidates[i];
-      if (c && c.url && c.anonKey) {
-        return {
-          url: String(c.url).trim().replace(/\/+$/, ''),
-          anonKey: String(c.anonKey).trim(),
-          source: i === 0 ? 'local' : 'file'
-        };
-      }
+  function normalizeConfig(raw) {
+    if (!raw || typeof raw !== 'object') return null;
+    const token = cleanText(raw.token);
+    const owner = cleanText(raw.owner);
+    const repo = cleanText(raw.repo).replace(/\.git$/i, '');
+    if (!token || !owner || !repo) return null;
+    return {
+      token: token,
+      owner: owner,
+      repo: repo,
+      branch: cleanText(raw.branch) || G.defaultBranch,
+      path: cleanText(raw.path).replace(/^\/+/, '') || G.defaultPath
+    };
+  }
+
+  function readConfig() {
+    try {
+      const raw = window.localStorage.getItem(STORE_KEY);
+      if (!raw) return null;
+      return normalizeConfig(JSON.parse(raw));
+    } catch (e) {
+      return null;
     }
-    return null;
+  }
+
+  function current() {
+    if (!config) config = readConfig();
+    return config;
   }
 
   function configured() {
-    return !!readConfig();
+    return !!current();
   }
 
   function getConfig() {
-    const c = config || readConfig();
-    return c ? { url: c.url, anonKey: c.anonKey, source: c.source } : null;
+    const c = current();
+    if (!c) return null;
+    return {
+      owner: c.owner,
+      repo: c.repo,
+      branch: c.branch,
+      path: c.path,
+      hasToken: !!c.token,
+      login: verified ? verified.login : '',
+      private: verified ? verified.private : null
+    };
   }
 
-  function setConfig(url, anonKey) {
-    const u = String(url || '').trim().replace(/\/+$/, '');
-    const k = String(anonKey || '').trim();
-    if (!/^https:\/\//i.test(u)) throw new Error('L’URL del progetto deve iniziare con https://');
-    try { new URL(u); } catch (e) { throw new Error('L’URL del progetto non è valido.'); }
-    if (k.length < 20) throw new Error('La chiave anon pubblica non sembra valida.');
-    try {
-      window.localStorage.setItem(DP.CONFIG.cloudConfigKey, JSON.stringify({ url: u, anonKey: k }));
-    } catch (e) {
-      throw new Error('Impossibile salvare la configurazione su questo dispositivo.');
+  function validateConfig(c) {
+    if (!/^[A-Za-z0-9_.-]+$/.test(c.owner)) {
+      throw new Error('Il nome utente GitHub contiene caratteri non validi.');
     }
-    config = { url: u, anonKey: k, source: 'local' };
-    return true;
+    if (!/^[A-Za-z0-9_.-]+$/.test(c.repo)) {
+      throw new Error('Il nome del repository contiene caratteri non validi.');
+    }
+    if (!c.branch || /[\s~^:?*[\\]/.test(c.branch)) {
+      throw new Error('Il nome del branch non è valido.');
+    }
+    if (!c.path || /(^|\/)\.\.(\/|$)/.test(c.path) || c.path.indexOf('\\') >= 0) {
+      throw new Error('Il percorso del file non è valido.');
+    }
+    if (c.token.length < 20) {
+      throw new Error('Il token GitHub non sembra valido.');
+    }
+  }
+
+  function saveConfig(c) {
+    try {
+      window.localStorage.setItem(STORE_KEY, JSON.stringify(c));
+    } catch (e) {
+      throw new Error('Impossibile salvare il token su questo dispositivo: memoria piena o modalità privata.');
+    }
+    config = c;
+    return c;
+  }
+
+  function setConfig(input) {
+    const cur = current() || {};
+    const c = normalizeConfig({
+      token: cleanText(input && input.token) || cur.token,
+      owner: cleanText(input && input.owner) || cur.owner,
+      repo: cleanText(input && input.repo) || cur.repo,
+      branch: cleanText(input && input.branch) || cur.branch || G.defaultBranch,
+      path: cleanText(input && input.path) || cur.path || G.defaultPath
+    });
+    if (!c) throw new Error('Servono token, proprietario e nome del repository.');
+    validateConfig(c);
+    return saveConfig(c);
   }
 
   function clearConfig() {
-    try { window.localStorage.removeItem(DP.CONFIG.cloudConfigKey); } catch (e) { /* ignore */ }
+    try { window.localStorage.removeItem(STORE_KEY); } catch (e) { /* ignore */ }
     config = null;
-    client = null;
-    initPromise = null;
-    session = null;
-    user = null;
+    verified = null;
     setStatus('local', 'Solo su questo dispositivo');
   }
 
@@ -100,13 +142,16 @@ DP.Cloud = (function () {
   }
 
   function getStatus() {
+    const c = current();
     return {
       state: status.state,
       message: status.message,
       lastSyncAt: status.lastSyncAt,
       error: status.error,
-      email: user ? user.email : '',
-      configured: configured()
+      email: verified ? verified.login : '',
+      login: verified ? verified.login : '',
+      repo: c ? c.owner + '/' + c.repo : '',
+      configured: !!c
     };
   }
 
@@ -119,518 +164,353 @@ DP.Cloud = (function () {
     };
   }
 
-  function onAuth(fn) {
-    if (typeof fn !== 'function') return function () {};
-    authListeners.push(fn);
-    return function () {
-      const i = authListeners.indexOf(fn);
-      if (i >= 0) authListeners.splice(i, 1);
-    };
-  }
-
-  function notifyAuth(event, s) {
-    authListeners.forEach(function (fn) {
-      try { fn(event, s); } catch (e) { console.error(e); }
-    });
-  }
-
-  // ---------- caricamento libreria ----------
-  function loadLib() {
-    if (window.supabase && window.supabase.createClient) return Promise.resolve(window.supabase);
-    if (libPromise) return libPromise;
-    libPromise = new Promise(function (resolve, reject) {
-      const s = document.createElement('script');
-      s.src = C.libUrl;
-      s.async = true;
-      s.onload = function () {
-        if (window.supabase && window.supabase.createClient) resolve(window.supabase);
-        else {
-          libPromise = null;
-          reject(new Error('Libreria Supabase non disponibile.'));
-        }
-      };
-      s.onerror = function () {
-        libPromise = null;
-        reject(new Error('La prima volta serve internet per caricare la sincronizzazione. Riprova quando sei online.'));
-      };
-      document.head.appendChild(s);
-    });
-    return libPromise;
-  }
-
-  function redirectUrl() {
-    return window.location.origin + window.location.pathname;
-  }
-
-  function init() {
-    if (initPromise) return initPromise;
-    config = readConfig();
-    if (!config) {
-      setStatus('local', 'Solo su questo dispositivo');
-      return Promise.resolve(null);
-    }
-
-    setStatus('connecting', 'Connessione…');
-    initPromise = loadLib().then(function (lib) {
-      client = lib.createClient(config.url, config.anonKey, {
-        auth: {
-          persistSession: true,
-          autoRefreshToken: true,
-          detectSessionInUrl: true,
-          flowType: 'pkce'
-        }
-      });
-      client.auth.onAuthStateChange(function (event, s) {
-        // Supabase sconsiglia di attendere chiamate nel callback: usciamo subito.
-        setTimeout(function () { handleAuthEvent(event, s); }, 0);
-      });
-      setStatus('ready', 'Pronto per la sincronizzazione');
-      return client;
-    }).catch(function (e) {
-      initPromise = null;
-      setStatus('error', 'Sincronizzazione non disponibile: ' + (e.message || e));
-      throw e;
-    });
-    return initPromise;
-  }
-
-  function handleAuthEvent(event, s) {
-    session = s || null;
-    user = s && s.user ? s.user : null;
-
-    if (event === 'PASSWORD_RECOVERY') {
-      setStatus('ready', 'Imposta una nuova password');
-      notifyAuth('recovery', session);
-      return;
-    }
-
-    if (event === 'SIGNED_OUT') {
-      setStatus('local', 'Non sincronizzato');
-      notifyAuth('signed-out', null);
-      return;
-    }
-
-    if (session && user) {
-      setStatus('ready', 'Connesso come ' + (user.email || ''));
-      notifyAuth(event, session);
-      if (event === 'SIGNED_IN' || event === 'INITIAL_SESSION' || event === 'TOKEN_REFRESHED') {
-        setTimeout(function () {
-          sync(DP.Store.get()).catch(function () { /* lo stato è già aggiornato */ });
-        }, 150);
-      }
-    } else {
-      notifyAuth(event, null);
-      if (status.state !== 'error') setStatus('local', 'Accedi per sincronizzare');
-    }
-  }
-
-  async function restoreSession() {
-    try { await init(); } catch (e) { return null; }
-    if (!client) return null;
-    try {
-      const res = await client.auth.getSession();
-      if (res.error) {
-        setStatus('error', friendlyAuthError(res.error));
-        return null;
-      }
-      session = res.data ? res.data.session : null;
-      user = session && session.user ? session.user : null;
-      if (session) {
-        setStatus('ready', 'Connesso come ' + (user.email || ''));
-      } else {
-        setStatus('local', 'Accedi per sincronizzare');
-      }
-      return session;
-    } catch (e) {
-      setStatus('error', 'Impossibile verificare la sessione: ' + (e.message || e));
-      return null;
-    }
-  }
-
-  // ---------- autenticazione ----------
-  function friendlyAuthError(err) {
+  // ---------- chiamate GitHub ----------
+  function friendlyError(err) {
     const msg = String((err && err.message) || err || 'Errore sconosciuto');
-    if (/Invalid login credentials/i.test(msg)) return 'Email o password non corretti.';
-    if (/Email not confirmed/i.test(msg)) return 'Devi prima confermare l’email: apri il link che ti abbiamo inviato.';
-    if (/User already registered/i.test(msg)) return 'Esiste già un account con questa email. Prova ad accedere.';
-    if (/Password should be at least/i.test(msg)) return 'La password è troppo corta: usa almeno 8 caratteri.';
-    if (/Unable to validate email/i.test(msg)) return 'L’indirizzo email non è valido.';
-    if (/rate limit|too many/i.test(msg)) return 'Troppi tentativi: riprova tra qualche minuto.';
-    if (/Signups not allowed/i.test(msg)) return 'Le registrazioni sono disabilitate nel progetto Supabase.';
-    if (/Email logins are disabled/i.test(msg)) return 'L’accesso con email è disabilitato nel progetto Supabase.';
-    if (/Failed to fetch|NetworkError|Load failed/i.test(msg)) return 'Connessione assente o Supabase non raggiungibile.';
+    if (err && err.status === 401) {
+      return 'Token GitHub non valido o scaduto. Creane uno nuovo e ricollega il diario.';
+    }
+    if (err && err.status === 403) {
+      if (/rate limit/i.test(msg)) return 'GitHub ha temporaneamente bloccato le richieste. Riprova tra qualche minuto.';
+      return 'GitHub ha negato l’accesso. Controlla che il token possa leggere e scrivere i Contents del repository.';
+    }
+    if (err && err.status === 404) {
+      return 'Repository, branch o file non trovati. Controlla proprietario, nome e branch.';
+    }
+    if (err && (err.status === 409 || err.status === 422)) {
+      return 'Il file è stato modificato altrove. Riprovo con i dati più recenti.';
+    }
+    if (/Failed to fetch|NetworkError|Load failed|ERR_NETWORK/i.test(msg)) {
+      return 'Connessione assente o GitHub non raggiungibile.';
+    }
     return msg;
   }
 
-  async function signIn(email, password) {
-    try { await init(); } catch (e) { return { ok: false, error: friendlyAuthError(e) }; }
-    if (!client) return { ok: false, error: 'Sincronizzazione non configurata.' };
+  async function request(c, path, options) {
+    const opts = options || {};
+    const headers = {
+      'Accept': 'application/vnd.github+json',
+      'Authorization': 'Bearer ' + c.token,
+      'X-GitHub-Api-Version': '2022-11-28'
+    };
+    if (opts.body) headers['Content-Type'] = 'application/json';
+    let res;
     try {
-      const res = await client.auth.signInWithPassword({
-        email: String(email || '').trim(),
-        password: String(password || '')
+      res = await fetch(API + path, {
+        method: opts.method || 'GET',
+        headers: headers,
+        body: opts.body ? JSON.stringify(opts.body) : undefined,
+        cache: 'no-store'
       });
-      if (res.error) return { ok: false, error: friendlyAuthError(res.error) };
-      session = res.data.session;
-      user = res.data.user;
-      setStatus('ready', 'Connesso come ' + (user.email || ''));
-      notifyAuth('signed-in', session);
-      return { ok: true, session: session, user: user };
     } catch (e) {
-      return { ok: false, error: friendlyAuthError(e) };
+      const err = new Error('Connessione assente o GitHub non raggiungibile.');
+      err.network = true;
+      throw err;
     }
+    let data = null;
+    const text = await res.text();
+    if (text) {
+      try { data = JSON.parse(text); } catch (e) { data = null; }
+    }
+    if (!res.ok) {
+      const err = new Error((data && data.message) || ('GitHub: errore ' + res.status));
+      err.status = res.status;
+      err.data = data;
+      throw err;
+    }
+    return data;
   }
 
-  async function signUp(email, password, name) {
-    try { await init(); } catch (e) { return { ok: false, error: friendlyAuthError(e) }; }
-    if (!client) return { ok: false, error: 'Sincronizzazione non configurata.' };
+  async function detectLogin(c) {
+    const user = await request(c, '/user');
+    if (!user || !user.login) throw new Error('Non riesco a leggere il profilo GitHub del token.');
+    return user.login;
+  }
+
+  async function verify(c) {
+    const user = await request(c, '/user');
+    const repo = await request(c, '/repos/' + encodeURIComponent(c.owner) + '/' + encodeURIComponent(c.repo));
+    if (!repo.private) {
+      throw new Error('Il repository ' + c.owner + '/' + c.repo + ' è pubblico. Rendilo privato: contiene dati di salute personali.');
+    }
+    if (repo.permissions && repo.permissions.push === false) {
+      throw new Error('Il token non ha il permesso di scrittura sul repository.');
+    }
     try {
-      const res = await client.auth.signUp({
-        email: String(email || '').trim(),
-        password: String(password || ''),
-        options: {
-          data: { name: String(name || '').trim().slice(0, 60) },
-          emailRedirectTo: redirectUrl()
-        }
-      });
-      if (res.error) return { ok: false, error: friendlyAuthError(res.error) };
-      const sess = res.data ? res.data.session : null;
-      if (sess) {
-        session = sess;
-        user = sess.user;
-        setStatus('ready', 'Connesso come ' + (user.email || ''));
-        notifyAuth('signed-in', sess);
+      await request(c, '/repos/' + encodeURIComponent(c.owner) + '/' + encodeURIComponent(c.repo) +
+        '/branches/' + encodeURIComponent(c.branch));
+    } catch (e) {
+      if (e.status === 404) {
+        throw new Error('Il branch "' + c.branch + '" non esiste. Crea il repository con un file README e riprova.');
       }
-      return {
-        ok: true,
-        needsConfirm: !sess,
-        session: sess,
-        user: res.data ? res.data.user : null
-      };
-    } catch (e) {
-      return { ok: false, error: friendlyAuthError(e) };
+      throw e;
     }
+    return {
+      login: user.login,
+      private: true,
+      defaultBranch: repo.default_branch || c.branch
+    };
   }
 
-  async function signOut() {
-    if (!client) return { ok: true };
+  function encodePath(path) {
+    return String(path || '').split('/').filter(Boolean).map(encodeURIComponent).join('/');
+  }
+
+  function contentsPath(c) {
+    return '/repos/' + encodeURIComponent(c.owner) + '/' + encodeURIComponent(c.repo) +
+      '/contents/' + encodePath(c.path);
+  }
+
+  function encodeBase64(text) {
+    const bytes = new TextEncoder().encode(String(text));
+    let binary = '';
+    const chunk = 0x8000;
+    for (let i = 0; i < bytes.length; i += chunk) {
+      binary += String.fromCharCode.apply(null, bytes.subarray(i, i + chunk));
+    }
+    return btoa(binary);
+  }
+
+  function decodeBase64(value) {
+    const clean = String(value || '').replace(/\s+/g, '');
+    const binary = atob(clean);
+    const bytes = new Uint8Array(binary.length);
+    for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
+    return new TextDecoder('utf-8').decode(bytes);
+  }
+
+  async function readRemote(c) {
     try {
-      const res = await client.auth.signOut();
-      session = null;
-      user = null;
-      setStatus('local', 'Non sincronizzato');
-      notifyAuth('signed-out', null);
-      return { ok: !res.error, error: res.error ? friendlyAuthError(res.error) : '' };
+      const data = await request(c, contentsPath(c) + '?ref=' + encodeURIComponent(c.branch));
+      if (Array.isArray(data)) {
+        throw new Error('Il percorso indicato è una cartella, non un file.');
+      }
+      if (!data || !data.sha) throw new Error('Risposta GitHub non valida per il file del diario.');
+      if (!data.content && data.size > 0) {
+        throw new Error('Il file del diario è troppo grande per essere letto da GitHub.');
+      }
+      return { sha: data.sha, text: decodeBase64(data.content || '') };
     } catch (e) {
-      return { ok: false, error: friendlyAuthError(e) };
+      if (e.status === 404) return null;
+      throw e;
     }
   }
 
-  async function resetPassword(email) {
-    try { await init(); } catch (e) { return { ok: false, error: friendlyAuthError(e) }; }
-    if (!client) return { ok: false, error: 'Sincronizzazione non configurata.' };
-    try {
-      const res = await client.auth.resetPasswordForEmail(String(email || '').trim(), {
-        redirectTo: redirectUrl()
-      });
-      if (res.error) return { ok: false, error: friendlyAuthError(res.error) };
-      return { ok: true };
-    } catch (e) {
-      return { ok: false, error: friendlyAuthError(e) };
+  async function writeRemote(c, payload, sha) {
+    const text = JSON.stringify(payload);
+    const bytes = new TextEncoder().encode(text);
+    // GitHub Contents API ferma i file a 1 MB e il contenuto viaggia in base64:
+    // teniamo un margine per non superare il limite.
+    if (bytes.length > 700000) {
+      throw new Error('Il diario è troppo grande per GitHub (oltre 700 KB). Esporta un backup e contatta l’assistenza.');
     }
+    const body = {
+      message: 'Pressione 2.0: aggiorna il diario (' + DP.Fmt.todayKey() + ')',
+      content: encodeBase64(text),
+      branch: c.branch
+    };
+    if (sha) body.sha = sha;
+    const data = await request(c, contentsPath(c), { method: 'PUT', body: body });
+    return data && data.content ? data.content.sha : null;
   }
 
-  async function updatePassword(password) {
-    if (!client) return { ok: false, error: 'Sincronizzazione non configurata.' };
-    try {
-      const res = await client.auth.updateUser({ password: String(password || '') });
-      if (res.error) return { ok: false, error: friendlyAuthError(res.error) };
-      return { ok: true };
-    } catch (e) {
-      return { ok: false, error: friendlyAuthError(e) };
-    }
+  // ---------- dati ----------
+  function nowIso() {
+    return new Date().toISOString();
   }
 
-  function currentSession() {
-    return session;
-  }
-
-  function currentUser() {
-    return user;
-  }
-
-  function isSignedIn() {
-    return !!(client && session && user);
-  }
-
-  // ---------- sincronizzazione dati ----------
   function dateMs(value) {
     const t = new Date(value).getTime();
     return Number.isFinite(t) ? t : 0;
   }
 
-  function nowIso() {
-    return new Date().toISOString();
-  }
-
-  function normalizeLimits(raw) {
-    let l = raw;
-    if (typeof l === 'string') {
-      try { l = JSON.parse(l); } catch (e) { l = null; }
-    }
-    l = l && typeof l === 'object' ? l : {};
+  function makePayload(state) {
     return {
-      sysLow: DP.toInt(l.sysLow, DP.CONFIG.limits.sysLow),
-      diaLow: DP.toInt(l.diaLow, DP.CONFIG.limits.diaLow),
-      pulseLow: DP.toInt(l.pulseLow, DP.CONFIG.limits.pulseLow),
-      pulseHigh: DP.toInt(l.pulseHigh, DP.CONFIG.limits.pulseHigh)
+      app: 'Pressione 2.0',
+      kind: 'diary',
+      version: 2,
+      updatedAt: nowIso(),
+      profile: {
+        name: String(state.profile.name || '').slice(0, 60),
+        target: { sys: state.profile.target.sys, dia: state.profile.target.dia },
+        limits: state.profile.limits,
+        updatedAt: state.profile.updatedAt || nowIso()
+      },
+      readings: state.readings.map(function (r) {
+        return {
+          id: r.id,
+          at: r.at,
+          sys: r.sys,
+          dia: r.dia,
+          pulse: r.pulse || 0,
+          irregular: !!r.irregular,
+          arm: r.arm || '',
+          posture: r.posture || '',
+          note: r.note || '',
+          source: r.source || 'manual',
+          createdAt: r.createdAt,
+          updatedAt: r.updatedAt,
+          deleted: !!r.deleted
+        };
+      })
     };
   }
 
-  function normalizeServerProfile(row) {
-    const target = DP.Stats.targetOf({
-      sys: row.target_sys,
-      dia: row.target_dia
+  function parseRemote(text) {
+    let data;
+    try {
+      data = JSON.parse(text);
+    } catch (e) {
+      throw new Error('Il file del diario non è un JSON valido: non lo sovrascrivo.');
+    }
+    if (!data || data.app !== 'Pressione 2.0' || data.kind !== 'diary') {
+      throw new Error('Il file non è un diario di Pressione 2.0: non lo sovrascrivo.');
+    }
+    const readings = (Array.isArray(data.readings) ? data.readings : [])
+      .map(function (r) { return DP.Stats.normalizeReading(r); })
+      .filter(Boolean);
+    let profile = null;
+    if (data.profile && typeof data.profile === 'object') {
+      profile = {
+        name: String(data.profile.name || '').slice(0, 60),
+        target: DP.Stats.targetOf(data.profile.target),
+        limits: DP.Stats.limitsOf(data.profile.limits),
+        updatedAt: data.profile.updatedAt || data.updatedAt || nowIso()
+      };
+    }
+    return { profile: profile, readings: readings };
+  }
+
+  function mergeStates(local, remote) {
+    const remoteReadings = remote ? remote.readings : [];
+    const remoteById = {};
+    remoteReadings.forEach(function (r) { remoteById[r.id] = r; });
+    const localById = {};
+    local.readings.forEach(function (r) { localById[r.id] = r; });
+
+    const ids = [];
+    const seen = {};
+    local.readings.forEach(function (r) {
+      if (!seen[r.id]) { seen[r.id] = true; ids.push(r.id); }
     });
-    return {
-      name: String(row.name || '').slice(0, 60),
-      target: target,
-      limits: normalizeLimits(row.limits),
-      updatedAt: row.updated_at || nowIso()
-    };
-  }
-
-  function normalizeServerReading(row) {
-    return DP.Stats.normalizeReading({
-      id: row.id,
-      at: row.local_at,
-      sys: row.sys,
-      dia: row.dia,
-      pulse: row.pulse || 0,
-      irregular: row.irregular,
-      arm: row.arm,
-      posture: row.posture,
-      note: row.note,
-      source: row.source,
-      createdAt: row.created_at,
-      updatedAt: row.updated_at,
-      deleted: row.deleted,
-      dirty: false
+    remoteReadings.forEach(function (r) {
+      if (!seen[r.id]) { seen[r.id] = true; ids.push(r.id); }
     });
-  }
 
-  function toServerReading(r, uid) {
-    let at = r.at;
-    let measured = new Date(at);
-    if (isNaN(measured.getTime())) {
-      measured = new Date();
-      at = DP.Fmt.nowLocal(measured);
-    }
-    return {
-      id: r.id,
-      user_id: uid,
-      local_at: at,
-      measured_at: measured.toISOString(),
-      tz_offset: measured.getTimezoneOffset(),
-      sys: r.sys,
-      dia: r.dia,
-      pulse: r.pulse || null,
-      irregular: !!r.irregular,
-      arm: r.arm || null,
-      posture: r.posture || null,
-      note: r.note || '',
-      source: r.source || 'manual',
-      created_at: r.createdAt || nowIso(),
-      updated_at: r.updatedAt || nowIso(),
-      deleted: !!r.deleted
-    };
-  }
+    const merged = [];
+    let localOnly = 0;
 
-  function toServerProfile(profile, uid) {
-    return {
-      user_id: uid,
-      name: String(profile.name || '').slice(0, 60),
-      target_sys: profile.target.sys,
-      target_dia: profile.target.dia,
-      limits: profile.limits,
-      updated_at: profile.updatedAt || nowIso()
-    };
-  }
-
-  async function fetchAllReadings(uid) {
-    const pageSize = 1000;
-    let from = 0;
-    const all = [];
-    while (true) {
-      const res = await client
-        .from(TABLE_READINGS)
-        .select('*')
-        .eq('user_id', uid)
-        .order('local_at', { ascending: false })
-        .order('id', { ascending: true })
-        .range(from, from + pageSize - 1);
-      if (res.error) throw res.error;
-      const rows = res.data || [];
-      all.push.apply(all, rows);
-      if (rows.length < pageSize) break;
-      from += pageSize;
-      if (from > 100000) break;
-    }
-    return all;
-  }
-
-  function friendlyDbError(err) {
-    const msg = String((err && err.message) || err || 'Errore sconosciuto');
-    if (/Could not find the table|relation .* does not exist|PGRST205/i.test(msg)) {
-      return 'Tabelle non trovate. Esegui il file supabase/schema.sql nel progetto Supabase.';
-    }
-    if (/row-level security|new row violates|permission denied/i.test(msg)) {
-      return 'Permessi del database non corretti. Controlla le policy RLS dello schema.';
-    }
-    if (/JWT|invalid.*token|not authenticated/i.test(msg)) {
-      return 'Sessione scaduta: accedi di nuovo.';
-    }
-    if (/Failed to fetch|NetworkError|Load failed/i.test(msg)) {
-      return 'Connessione assente o Supabase non raggiungibile.';
-    }
-    return msg;
-  }
-
-  function ensureUuidIds() {
-    const state = DP.Store.get();
-    let changed = false;
-    state.readings.forEach(function (r) {
-      if (!DP.Fmt.isUuid(r.id)) {
-        r.id = DP.Fmt.uid();
-        r.dirty = true;
-        changed = true;
+    ids.forEach(function (id) {
+      const lr = localById[id];
+      const rr = remoteById[id];
+      if (lr && rr) {
+        if (lr.dirty && dateMs(lr.updatedAt) >= dateMs(rr.updatedAt)) {
+          merged.push(lr);
+        } else {
+          merged.push(Object.assign({}, rr, { dirty: false }));
+        }
+        return;
       }
+      if (lr) {
+        merged.push(Object.assign({}, lr, { dirty: true }));
+        localOnly++;
+        return;
+      }
+      if (rr) merged.push(Object.assign({}, rr, { dirty: false }));
     });
-    if (changed) DP.Store.save();
+
+    let applyRemoteProfile = null;
+    if (remote && remote.profile) {
+      const lp = local.profile;
+      const rp = remote.profile;
+      const localWins = lp.dirty && dateMs(lp.updatedAt) > dateMs(rp.updatedAt);
+      if (!localWins) applyRemoteProfile = rp;
+    }
+
+    return { readings: merged, applyRemoteProfile: applyRemoteProfile, localOnly: localOnly };
   }
 
+  // ---------- flusso di sincronizzazione ----------
   async function doSync() {
-    if (!client || !session || !user) {
-      setStatus('local', 'Accedi per sincronizzare');
-      return { ok: false, reason: 'no-auth' };
+    const c = current();
+    if (!c) {
+      setStatus('local', 'Solo su questo dispositivo');
+      return { ok: false, reason: 'no-config' };
     }
     if (typeof navigator !== 'undefined' && navigator.onLine === false) {
       setStatus('offline', 'Offline: i dati restano sul dispositivo');
       return { ok: false, reason: 'offline' };
     }
 
-    const uid = user.id;
-    setStatus('syncing', 'Sincronizzazione…');
-    ensureUuidIds();
-
     try {
-      // 1) Scarica impostazioni e tutte le misurazioni (paginazione).
-      const settingsRes = await client.from(TABLE_SETTINGS).select('*').eq('user_id', uid).maybeSingle();
-      if (settingsRes.error) throw settingsRes.error;
-      const serverSettingsRow = settingsRes.data || null;
-      const serverRows = await fetchAllReadings(uid);
-
-      const local = DP.Store.get();
-      const localReadings = local.readings.slice();
-      const localById = {};
-      localReadings.forEach(function (r) { localById[r.id] = r; });
-
-      const accountChanged = local.sync.accountId && local.sync.accountId !== uid;
-      if (local.sync.accountId !== uid) {
-        // Primo collegamento (o account diverso): carica i dati locali nell'account.
-        localReadings.forEach(function (r) {
-          if (!r.deleted) r.dirty = true;
-        });
+      if (!verified) {
+        setStatus('connecting', 'Verifico GitHub…');
+        verified = await verify(c);
       }
+      setStatus('syncing', 'Sincronizzazione…');
 
-      // 2) Unisci: per ogni riga remota vince la più recente, salvo
-      //    modifiche locali non ancora sincronizzate più recenti.
-      const serverMap = {};
-      const merged = [];
-      serverRows.forEach(function (row) {
-        const sr = normalizeServerReading(row);
-        if (!sr) return;
-        serverMap[sr.id] = sr;
-        const lr = localById[sr.id];
-        if (lr && lr.dirty && dateMs(lr.updatedAt) > dateMs(sr.updatedAt)) {
-          merged.push(lr);
-        } else {
-          merged.push(sr);
+      let lastError = null;
+      for (let attempt = 0; attempt < 3; attempt++) {
+        const remoteFile = await readRemote(c);
+        const remote = remoteFile ? parseRemote(remoteFile.text) : null;
+        const local = DP.Store.get();
+        const merge = mergeStates(local, remote);
+
+        DP.Store.setReadings(merge.readings, 'sync-merge');
+        if (merge.applyRemoteProfile) DP.Store.applySyncedProfile(merge.applyRemoteProfile);
+
+        const state = DP.Store.get();
+        const alreadyPushed = merge.localOnly;
+        const profileDirty = !!state.profile.dirty;
+        const readingsDirty = state.readings.some(function (r) { return r.dirty; });
+        const shouldPush = !remoteFile || profileDirty || readingsDirty || alreadyPushed > 0;
+
+        if (!shouldPush) {
+          const at = nowIso();
+          DP.Store.setSyncMeta({ accountId: 'github:' + c.owner + '/' + c.repo, lastSyncAt: at });
+          setStatus('synced', 'Sincronizzato ' + DP.Fmt.timeAgo(at), { lastSyncAt: at });
+          return {
+            ok: true,
+            pushed: 0,
+            pulled: remote ? remote.readings.length : 0,
+            total: state.readings.length
+          };
         }
-      });
-      localReadings.forEach(function (lr) {
-        if (!serverMap[lr.id]) {
-          if (!lr.deleted) lr.dirty = true;
-          merged.push(lr);
+
+        const payload = makePayload(state);
+        const pendingChanges = state.readings.filter(function (r) { return r.dirty; }).length;
+        try {
+          await writeRemote(c, payload, remoteFile ? remoteFile.sha : null);
+        } catch (e) {
+          lastError = e;
+          if ((e.status === 409 || e.status === 422) && attempt < 2) {
+            // Un altro dispositivo ha scritto nel frattempo: rileggo e rifaccio il merge.
+            continue;
+          }
+          throw e;
         }
-      });
 
-      // 3) Profilo: vince la versione più recente.
-      let localProfile = local.profile;
-      let profileNeedsPush = false;
-      if (serverSettingsRow) {
-        const sp = normalizeServerProfile(serverSettingsRow);
-        const localWins = localProfile.dirty && dateMs(localProfile.updatedAt) > dateMs(sp.updatedAt);
-        if (localWins) {
-          profileNeedsPush = true;
-        } else {
-          DP.Store.applySyncedProfile({
-            name: sp.name,
-            target: sp.target,
-            limits: sp.limits,
-            updatedAt: sp.updatedAt
-          });
-        }
-      } else {
-        profileNeedsPush = true;
+        const ids = state.readings.map(function (r) { return r.id; });
+        DP.Store.markSynced(ids, true);
+        const at = nowIso();
+        DP.Store.setSyncMeta({ accountId: 'github:' + c.owner + '/' + c.repo, lastSyncAt: at });
+        setStatus('synced', 'Sincronizzato ' + DP.Fmt.timeAgo(at), { lastSyncAt: at });
+        return {
+          ok: true,
+          pushed: pendingChanges || (profileDirty ? 1 : 0),
+          pulled: remote ? remote.readings.length : 0,
+          total: state.readings.length
+        };
       }
-
-      // 4) Applica i dati remoti alla cache locale.
-      DP.Store.setReadings(merged, 'sync-merge');
-
-      // 5) Carica le modifiche locali (profilo + misurazioni dirty).
-      const stateAfter = DP.Store.get();
-      if (profileNeedsPush || stateAfter.profile.dirty) {
-        const res = await client.from(TABLE_SETTINGS).upsert(
-          toServerProfile(stateAfter.profile, uid),
-          { onConflict: 'user_id' }
-        );
-        if (res.error) throw res.error;
-        DP.Store.markSynced([], true);
-      }
-
-      const dirty = stateAfter.readings.filter(function (r) { return r.dirty; });
-      let pushed = 0;
-      const pushedIds = [];
-      for (let i = 0; i < dirty.length; i += 200) {
-        const batch = dirty.slice(i, i + 200);
-        const payload = batch.map(function (r) { return toServerReading(r, uid); });
-        const res = await client.from(TABLE_READINGS).upsert(payload, { onConflict: 'id' });
-        if (res.error) throw res.error;
-        pushed += batch.length;
-        batch.forEach(function (r) { pushedIds.push(r.id); });
-      }
-      if (pushedIds.length) DP.Store.markSynced(pushedIds, false);
-
-      const at = nowIso();
-      DP.Store.setSyncMeta({ accountId: uid, lastSyncAt: at });
-      setStatus('synced', 'Sincronizzato ' + DP.Fmt.timeAgo(at), { lastSyncAt: at });
-
-      return {
-        ok: true,
-        pushed: pushed,
-        pulled: serverRows.length,
-        total: stateAfter.readings.length,
-        accountChanged: !!accountChanged
-      };
+      throw lastError || new Error('Sincronizzazione non completata.');
     } catch (e) {
-      const msg = friendlyDbError(e);
+      const msg = friendlyError(e);
       setStatus('error', msg);
-      return { ok: false, error: msg };
+      return { ok: false, error: msg, reason: e && e.network ? 'offline' : 'error' };
     }
   }
 
-  function sync(state) {
+  function sync() {
     if (syncPromise) {
       syncAgain = true;
       return syncPromise;
@@ -640,7 +520,7 @@ DP.Cloud = (function () {
       if (syncAgain) {
         syncAgain = false;
         setTimeout(function () {
-          DP.Cloud.sync(DP.Store.get()).catch(function () { /* ignore */ });
+          DP.Cloud.sync().catch(function () { /* ignore */ });
         }, 800);
       }
     });
@@ -648,25 +528,100 @@ DP.Cloud = (function () {
   }
 
   function scheduleSync(delay) {
-    if (!isSignedIn()) return;
+    if (!configured()) return;
+    if (DP.Store.settings().autoSync === false) return;
     setTimeout(function () {
-      sync(DP.Store.get()).catch(function () { /* ignore */ });
+      sync().catch(function () { /* ignore */ });
     }, Math.max(300, delay || 1200));
   }
 
-  async function deleteCloudData() {
-    if (!client || !session || !user) return { ok: false, error: 'Non hai effettuato l’accesso.' };
-    const uid = user.id;
+  // ---------- avvio e connessione ----------
+  function init() {
+    config = readConfig();
+    if (!config) {
+      setStatus('local', 'Solo su questo dispositivo');
+      return Promise.resolve(null);
+    }
+    const last = DP.Store.get().sync.lastSyncAt;
+    setStatus('ready', 'GitHub pronto', { lastSyncAt: last || null });
+    return Promise.resolve(config);
+  }
+
+  async function restoreSession() {
+    const c = current();
+    if (!c) {
+      setStatus('local', 'Solo su questo dispositivo');
+      return null;
+    }
+    if (typeof navigator !== 'undefined' && navigator.onLine === false) {
+      setStatus('offline', 'Offline: i dati restano sul dispositivo');
+      return null;
+    }
     try {
-      const r1 = await client.from(TABLE_READINGS).delete().eq('user_id', uid);
-      if (r1.error) throw r1.error;
-      const r2 = await client.from(TABLE_SETTINGS).delete().eq('user_id', uid);
-      if (r2.error) throw r2.error;
+      setStatus('connecting', 'Verifico GitHub…');
+      verified = await verify(c);
+      setStatus('ready', 'Collegato come ' + verified.login);
+      return verified;
+    } catch (e) {
+      setStatus('error', friendlyError(e));
+      return null;
+    }
+  }
+
+  async function connect(input) {
+    const cur = current() || {};
+    const token = cleanText(input && input.token) || cur.token;
+    let owner = cleanText(input && input.owner) || cur.owner;
+    const repo = cleanText(input && input.repo) || cur.repo || G.defaultRepo;
+    const branch = cleanText(input && input.branch) || G.defaultBranch;
+    const path = cleanText(input && input.path) || G.defaultPath;
+
+    if (!token) return { ok: false, error: 'Incolla il token GitHub.' };
+    const candidate = normalizeConfig({ token: token, owner: owner || 'pending', repo: repo, branch: branch, path: path });
+    if (!candidate) return { ok: false, error: 'Controlla proprietario, repository e token.' };
+
+    try {
+      if (!owner) {
+        owner = await detectLogin(candidate);
+        candidate.owner = owner;
+      }
+      validateConfig(candidate);
+      const info = await verify(candidate);
+      saveConfig(candidate);
+      verified = info;
+      setStatus('ready', 'Collegato come ' + info.login);
+      return { ok: true, login: info.login, owner: candidate.owner, repo: candidate.repo };
+    } catch (e) {
+      return { ok: false, error: friendlyError(e) };
+    }
+  }
+
+  async function deleteCloudData() {
+    const c = current();
+    if (!c) return { ok: false, error: 'Sincronizzazione non configurata.' };
+    try {
+      const remoteFile = await readRemote(c);
+      if (!remoteFile) return { ok: true };
+      await request(c, contentsPath(c), {
+        method: 'DELETE',
+        body: {
+          message: 'Pressione 2.0: elimina il diario dal repository',
+          sha: remoteFile.sha,
+          branch: c.branch
+        }
+      });
       DP.Store.setSyncMeta({ lastSyncAt: null });
+      setStatus('ready', 'Diario rimosso da GitHub', { lastSyncAt: null });
       return { ok: true };
     } catch (e) {
-      return { ok: false, error: friendlyDbError(e) };
+      return { ok: false, error: friendlyError(e) };
     }
+  }
+
+  function signOut() {
+    // Per GitHub "uscire" significa dimenticare il token su questo dispositivo.
+    clearConfig();
+    return Promise.resolve({ ok: true });
   }
 
   return {
@@ -674,22 +629,15 @@ DP.Cloud = (function () {
     getConfig: getConfig,
     setConfig: setConfig,
     clearConfig: clearConfig,
+    connect: connect,
     init: init,
     restoreSession: restoreSession,
     getStatus: getStatus,
     subscribe: subscribe,
-    onAuth: onAuth,
-    signIn: signIn,
-    signUp: signUp,
-    signOut: signOut,
-    resetPassword: resetPassword,
-    updatePassword: updatePassword,
-    currentSession: currentSession,
-    currentUser: currentUser,
-    isSignedIn: isSignedIn,
+    isSignedIn: configured,
     sync: sync,
     scheduleSync: scheduleSync,
     deleteCloudData: deleteCloudData,
-    friendlyAuthError: friendlyAuthError
+    signOut: signOut
   };
 })();

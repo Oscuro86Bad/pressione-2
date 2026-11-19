@@ -35,12 +35,11 @@ DP.Views.onboarding = (function () {
           '<button type="submit" class="btn btn-primary btn-lg btn-block">Inizia</button>' +
         '</form>' +
         '<div class="welcome-secondary">' +
-          (configured
-            ? '<button type="button" class="link-btn" data-action="open-auth">Ho già un account · Accedi</button>'
-            : '<button type="button" class="link-btn" data-action="open-cloud-setup">Attiva la sincronizzazione</button>') +
+          '<button type="button" class="link-btn" data-action="open-cloud-setup">' +
+          (configured ? 'Sincronizzazione GitHub attiva' : 'Collega GitHub (facoltativo)') + '</button>' +
         '</div>' +
         '<p class="privacy-mini">' + DP.UI.icon('lock') +
-          '<span>Le foto non vengono salvate né inviate: la lettura avviene sul tuo dispositivo. Con un account, le misurazioni sono protette e visibili solo a te.</span>' +
+          '<span>Le foto non vengono salvate né inviate: la lettura avviene sul tuo dispositivo. Con GitHub, il diario è protetto in un repository privato e visibile solo a te.</span>' +
         '</p>' +
       '</section>' +
       '<p class="welcome-disclaimer">' + esc(DP.CONFIG.disclaimer) + '</p>' +
@@ -71,10 +70,6 @@ DP.Views.onboarding = (function () {
       DP.UI.updateHeader();
       DP.UI.toast('Benvenuto nel tuo diario, ' + name.split(' ')[0] + '.', 'ok');
       DP.App.go('oggi');
-      // Se la sincronizzazione è configurata ma non c'è un account, invita ad accedere.
-      if (DP.Cloud.configured() && !DP.Cloud.isSignedIn()) {
-        setTimeout(function () { DP.AuthUI.open(); }, 450);
-      }
     });
   }
 

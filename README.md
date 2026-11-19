@@ -5,7 +5,7 @@ Diario pressorio personale, online e installabile, pensato per chi deve annotare
 - **App online:** https://oscuro86bad.github.io/pressione-2/
 - **Repository:** https://github.com/Oscuro86Bad/pressione-2
 - **Tipo:** PWA statica (HTML + CSS + JavaScript, nessuna build, nessun framework)
-- **Dati:** locali sul dispositivo + sincronizzazione opzionale su Supabase
+- **Dati:** locali sul dispositivo + sincronizzazione opzionale con un repository GitHub privato
 
 > Pressione 2.0 è un diario personale. **Non è un dispositivo medico**, non fa diagnosi e non sostituisce il medico. Non modificare mai una terapia in base ai valori registrati.
 
@@ -17,7 +17,7 @@ Diario pressorio personale, online e installabile, pensato per chi deve annotare
 - [Privacy e salute](#privacy-e-salute)
 - [Avvio locale](#avvio-locale)
 - [Pubblicazione su GitHub Pages](#pubblicazione-su-github-pages)
-- [🔐 Sincronizzazione online (Supabase)](#-sincronizzazione-online-supabase)
+- [🔐 Sincronizzazione con GitHub privato](#-sincronizzazione-con-github-privato)
 - [Foto del misuratore e OCR](#foto-del-misuratore-e-ocr)
 - [Report per il medico](#report-per-il-medico)
 - [Backup, esportazione e importazione](#backup-esportazione-e-importazione)
@@ -38,16 +38,16 @@ Diario pressorio personale, online e installabile, pensato per chi deve annotare
 - **Diario** con ricerca, filtri per periodo e categoria, raggruppamento per giorno, note, braccio, posizione e battito irregolare.
 - **Grafico** dell’andamento con banda del target.
 - **Report per il medico** con medie, percentuale nel target, medie mattina/sera, grafico, riepilogo giornaliero e dettaglio di ogni misurazione. Stampa o salvataggio in PDF con il comando Stampa del browser.
-- **Sincronizzazione facoltativa** su Supabase con account email/password, Row Level Security e coda offline.
+- **Sincronizzazione facoltativa** con un repository GitHub **privato**: un solo file JSON, token limitato al repository e coda offline.
 - **Backup JSON**, **esportazione CSV**, importazione dei backup della vecchia app Android.
 - **PWA**: installabile su Android, iPhone e computer; funziona offline dopo il primo caricamento.
 
 ## Privacy e salute
 
 - Le **foto non lasciano il dispositivo**: il testo viene estratto nel browser con Tesseract.js (WebAssembly). Le immagini non vengono salvate, non vengono messe in cache e non vengono inviate a nessun server.
-- Senza account, **tutto resta nel `localStorage` del browser**. Se cancelli i dati del sito, perdi il diario: esporta un backup JSON ogni tanto.
-- Con Supabase, ogni riga delle tabelle `bp_settings` e `bp_readings` è protetta da **Row Level Security**: un utente autenticato vede e modifica solo le proprie righe. La chiave `anon` è pubblica per progetto e non permette di leggere i dati senza login.
-- Non inserire mai la **`service_role` key** nel frontend.
+- Senza sincronizzazione, **tutto resta nel `localStorage` del browser**. Se cancelli i dati del sito, perdi il diario: esporta un backup JSON ogni tanto.
+- Con la sincronizzazione, il diario viene salvato in **un repository GitHub privato** che scegli tu. L’app rifiuta di scrivere su repository pubblici: i dati di salute non devono mai essere visibili ad altri.
+- L’accesso a GitHub usa un **token fine-grained** limitato a quel solo repository, con permesso **Contents: Read and write**. Il token resta nel `localStorage` del dispositivo e non viene mai pubblicato nel codice.
 - L’app non mostra pubblicità e non raccoglie statistiche d’uso.
 - L’app **non è un dispositivo medico**. In caso di valori molto elevati (ad esempio 180/120 mmHg) o sintomi importanti (mal di testa forte, dolore al petto, difficoltà a respirare, disturbi alla vista) contatta subito il medico o i servizi di emergenza.
 
@@ -87,96 +87,57 @@ git push
 
 > Se in futuro vuoi passare a GitHub Actions, aggiungi un workflow in `.github/workflows/` e imposta **Source: GitHub Actions**. Il token GitHub deve avere anche lo scope `workflow` (`gh auth refresh -h github.com -s workflow`).
 
-## 🔐 Sincronizzazione online (Supabase)
+## 🔐 Sincronizzazione con GitHub privato
 
-La sincronizzazione è **facoltativa**: l’app funziona anche solo in locale. Per attivarla serve un progetto Supabase gratuito.
+La sincronizzazione è **facoltativa**: l’app funziona anche solo in locale. Serve un account GitHub (lo stesso su cui è pubblicata l’app va benissimo) e due cose: un **repository privato** per il diario e un **token** che dia accesso solo a quel repository.
 
-### 1. Crea il progetto
+Il diario è un unico file JSON (`diario.json`). Nessun altro servizio, nessun database da gestire: i dati restano nel tuo account GitHub.
 
-1. Vai su [supabase.com/dashboard](https://supabase.com/dashboard) e crea un progetto.
-2. Scegli una password del database e conservala.
-3. Attendi che il progetto sia pronto.
+### 1. Crea il repository privato
 
-### 2. Prepara il database
+1. Apri [github.com/new](https://github.com/new).
+2. Nome: **`pressione-dati`** (o quello che preferisci).
+3. Visibilità: **Private**. Non renderlo pubblico: conterrà dati di salute.
+4. Spunta **Add a README file** (serve a creare subito il branch `main`).
+5. Premi **Create repository**.
 
-1. Apri **SQL Editor** nel progetto Supabase.
-2. Apri il file [`supabase/schema.sql`](supabase/schema.sql) del repository (oppure usa il pulsante **Copia lo schema SQL** nella configurazione dell’app).
-3. Incolla tutto il contenuto nell’editor e premi **Run**.
+> Se il repository esiste già, va bene lo stesso: deve solo essere privato e avere almeno un commit (il file README).
 
-Lo schema crea:
+### 2. Crea il token limitato
 
-| Tabella | Contenuto |
-| --- | --- |
-| `bp_settings` | una riga per utente: nome, target massima/minima, soglie, data di aggiornamento |
-| `bp_readings` | una riga per misurazione: data/ora locale, valori, polso, note, fonte, soft delete |
+1. Vai su [github.com/settings/personal-access-tokens/new](https://github.com/settings/personal-access-tokens/new).
+2. **Token name:** ad esempio `Pressione 2.0`.
+3. **Expiration:** scegli una scadenza (90 giorni o più).
+4. **Repository access:** **Only select repositories** → seleziona **solo** `pressione-dati`.
+5. **Repository permissions → Contents:** **Read and write**. Non serve altro.
+6. Premi **Generate token** e copia il token (`github_pat_…`): GitHub lo mostra una sola volta.
 
-Entrambe hanno **RLS attiva** e policy `select/insert/update/delete` limitate a `auth.uid() = user_id`.
+### 3. Collega l’app
 
-### 3. Abilita l’accesso con email
+1. Apri l’app → **Impostazioni → Sincronizzazione → Collega GitHub**.
+2. Incolla il **token**.
+3. Lascia vuoto **Proprietario** se vuoi: l’app lo ricava dal token.
+4. Controlla **Repository** (`pressione-dati`), **Branch** (`main`) e **File** (`diario.json`).
+5. Premi **Collega e sincronizza**.
 
-1. Vai in **Authentication → Providers** e assicurati che **Email** sia attivo.
-2. In **Authentication → URL Configuration** imposta come **Site URL** l’indirizzo dell’app, ad esempio:
+L’app verifica il token, controlla che il repository sia **privato** e che il branch esista, poi crea `diario.json` al primo sync. Se il repository è pubblico, il collegamento viene rifiutato.
 
-   ```text
-   https://oscuro86bad.github.io/pressione-2/
-   ```
+La configurazione (token compreso) viene salvata solo nel `localStorage` di quel dispositivo. Per collegare un secondo dispositivo ripeti il passaggio 3 con lo stesso token: il diario viene scaricato e unito.
 
-   Se provi in locale, aggiungi anche:
+### 4. Come funziona la sincronizzazione
 
-   ```text
-   http://localhost:8080/
-   ```
+- Il diario locale e quello remoto vengono **uniti per `updatedAt`**: vince la modifica più recente.
+- Le eliminazioni viaggiano come cancellazioni “morbide” (`deleted: true`), così non ricompaiono dagli altri dispositivi.
+- Se due dispositivi scrivono quasi insieme, l’app rilegge il file e riprova (fino a 3 tentativi).
+- Le modifiche fatte offline restano sul dispositivo e vengono inviate appena torni online.
+- Il token non viene mai messo in cache dal service worker né scritto nel repository.
 
-3. Aggiungi gli stessi indirizzi tra i **Redirect URLs**.
-4. Se non vuoi confermare l’email a ogni registrazione, puoi disattivare **Confirm email** nelle impostazioni di autenticazione. Per un diario personale la conferma email è comunque consigliata.
+### Sicurezza e revoca
 
-### 4. Copia URL e chiave pubblica
-
-In **Project Settings → API** copia:
-
-- **Project URL** (es. `https://abcdefgh.supabase.co`)
-- **anon public key**
-
-Non usare la `service_role` key.
-
-### 5. Collega l’app
-
-Hai due modi equivalenti:
-
-**A. Dall’app (più semplice)**
-
-1. Apri l’app → **Impostazioni → Sincronizzazione → Attiva la sincronizzazione**.
-2. Incolla **Project URL** e **anon public key**.
-3. Salva: l’app ricarica e mostra **Accedi / Crea account**.
-
-La configurazione viene salvata nel `localStorage` del dispositivo. Per gli altri dispositivi ripeti l’operazione, oppure usa il metodo B.
-
-**B. Nel file pubblicato (per tutti i dispositivi)**
-
-Modifica [`js/supabase-config.js`](js/supabase-config.js):
-
-```js
-window.DP_SUPABASE = {
-  url: 'https://abcdefgh.supabase.co',
-  anonKey: 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...'
-};
-```
-
-Poi fai commit e push: dopo la pubblicazione, ogni dispositivo troverà la configurazione già pronta. La chiave `anon` è pubblica per progetto; la protezione dei dati è affidata alle policy RLS.
-
-### 6. Primo accesso e sincronizzazione
-
-1. Crea un account con la tua email.
-2. Se la conferma email è attiva, apri il link ricevuto e poi torna ad accedere.
-3. Le misurazioni già presenti sul dispositivo vengono caricate nel tuo account al primo sync.
-4. Su un secondo dispositivo, accedi con lo stesso account: il diario viene scaricato e unito.
-
-La sincronizzazione:
-
-- scarica tutte le righe dell’account (paginazione da 1000);
-- unisce per `updatedAt`, lasciando vincere la modifica più recente;
-- usa cancellazioni “morbide” (`deleted = true`) per propagare le eliminazioni;
-- conserva una copia locale per l’uso offline e riprova quando torna la connessione.
+- Il repository **deve essere privato**: l’app non scrive dati di salute altrove.
+- Il token è **fine-grained** e limitato a un solo repository con permesso **Contents: Read and write**.
+- Per revocare l’accesso: cancella il token da **GitHub → Settings → Developer settings → Personal access tokens → Fine-grained tokens**. L’app smette subito di funzionare online finché non ne colleghi uno nuovo.
+- **Scollega** nelle impostazioni dimentica il token da quel dispositivo senza cancellare il file su GitHub. **Elimina dati da GitHub** cancella anche il file remoto.
 
 ## Foto del misuratore e OCR
 
@@ -247,10 +208,9 @@ I test coprono il parser OCR (layout diversi, errori `O/0`, date e orari da igno
 │   ├── ocr-parse.js       interpretazione del testo OCR
 │   ├── stats.js           categorie, validazione, statistiche, report
 │   ├── store.js           localStorage, CRUD, backup, import
-│   ├── cloud.js           Supabase: auth, sync, merge, RLS errors
+│   ├── cloud.js           GitHub: token, API Contents, sync, merge
 │   ├── chart.js           grafico canvas
 │   ├── ocr.js             Tesseract.js sul dispositivo
-│   ├── supabase-config.js configurazione facoltativa
 │   ├── app.js             avvio, routing, azioni
 │   └── ui/
 │       ├── common.js      shell, toast, modali, icone
@@ -265,9 +225,7 @@ I test coprono il parser OCR (layout diversi, errori `O/0`, date e orari da igno
 ├── scripts/
 │   ├── make-icon.ps1      rigenera le icone PNG
 │   └── serve.ps1          server statico locale
-├── supabase/
-│   └── schema.sql
-└── .github/workflows/deploy.yml
+└── .nojekyll
 ```
 
 ### Note per lo sviluppo
@@ -285,14 +243,17 @@ I test coprono il parser OCR (layout diversi, errori `O/0`, date e orari da igno
 
 ## Problemi frequenti
 
-**La sincronizzazione dice “Tabelle non trovate”.**
-Non hai eseguito `supabase/schema.sql` nel progetto, oppure hai incollato solo una parte. Riesegui tutto il file nel SQL Editor.
+**La sincronizzazione dice “Repository, branch o file non trovati”.**
+Controlla proprietario, nome del repository e branch. Il branch deve esistere: crea il repository con un file README se è vuoto. Il file `diario.json` viene creato automaticamente al primo sync.
 
-**“Permessi del database non corretti”.**
-Controlla che RLS sia attiva e che le policy dello schema siano state create. Non disattivare RLS: servono proprio a isolare gli account.
+**“Il repository è pubblico.”**
+L’app rifiuta di salvare dati di salute in un repository pubblico. Vai su **Settings → General → Danger Zone → Change visibility → Make private**.
 
-**L’email di conferma non arriva.**
-Controlla lo spam e l’indirizzo. Nei progetti gratuiti l’invio email ha limiti; per le prove puoi disattivare **Confirm email** in Supabase.
+**“GitHub ha negato l’accesso.”**
+Il token non ha il permesso **Contents: Read and write** sul repository, oppure è scaduto. Creane uno nuovo con **Only select repositories** e ricollega il diario.
+
+**Il token è stato revocato o è scaduto.**
+L’app mostra un errore di sincronizzazione. Crea un nuovo token e reinseriscilo in **Impostazioni → Sincronizzazione → Modifica**.
 
 **La fotocamera non si apre.**
 Serve HTTPS (GitHub Pages o localhost) e il permesso fotocamera del browser. Su iPhone puoi usare anche **Galleria**.
@@ -301,10 +262,10 @@ Serve HTTPS (GitHub Pages o localhost) e il permesso fotocamera del browser. Su 
 Avvicinati al display, evita riflessi e ombre, tieni il telefono parallelo, usa buona luce e ritaglia mentalmente solo il display. Puoi sempre correggere a mano: l’OCR non salva nulla da solo.
 
 **Ho cancellato i dati del browser.**
-Senza account non c’è recupero: ripristina un backup JSON. Con account, i dati restano su Supabase e tornano al prossimo accesso.
+Senza sincronizzazione non c’è recupero: ripristina un backup JSON. Con GitHub collegato, il diario è nel repository privato e torna al prossimo sync (o importando il file `diario.json` come backup).
 
-**Voglio cambiare account.**
-Esci dall’account nelle impostazioni. Le misurazioni locali restano; al primo accesso con un altro account l’app chiede di caricarle nel nuovo account. Verifica sempre cosa stai per condividere.
+**Voglio cambiare repository o token.**
+In **Impostazioni → Sincronizzazione → Modifica** puoi cambiare repository, branch, file o token. Con **Scollega** il token viene dimenticato dal dispositivo; le misurazioni locali restano e il file su GitHub non viene toccato.
 
 **La stampa esce vuota o tagliata.**
 Usa Chrome/Edge, scegli A4, margini predefiniti e attiva “Grafica di sfondo” se vuoi la banda del target. Il report è progettato per A4 verticale.

@@ -202,7 +202,7 @@ DP.Fmt = (function () {
     try {
       if (window.crypto && crypto.randomUUID) return crypto.randomUUID();
     } catch (e) { /* fallback */ }
-    // UUID v4 di riserva (compatibile con la colonna uuid di Supabase)
+    // UUID v4 di riserva per gli identificativi delle misurazioni
     return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, function (c) {
       const r = Math.random() * 16 | 0;
       const v = c === 'x' ? r : (r & 0x3 | 0x8);

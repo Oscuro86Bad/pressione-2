@@ -207,7 +207,7 @@ DP.Views.diary = (function () {
       (all.length
         ? '<div class="diary-footer-note">' + DP.UI.icon('lock') +
             '<span>Le misurazioni sono salvate su questo dispositivo' +
-            (DP.Cloud.configured() && DP.Cloud.isSignedIn() ? ' e sincronizzate sul tuo account.' : '. Attiva la sincronizzazione per ritrovarle altrove.') +
+            (DP.Cloud.configured() && DP.Cloud.isSignedIn() ? ' e sincronizzate sul tuo repository GitHub privato.' : '. Attiva la sincronizzazione per ritrovarle altrove.') +
             '</span></div>'
         : '') +
     '</div>';

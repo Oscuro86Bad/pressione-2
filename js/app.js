@@ -119,7 +119,6 @@ DP.App = (function () {
 
   async function syncNow() {
     if (!DP.Cloud.configured()) { DP.AuthUI.openSetup(); return; }
-    if (!DP.Cloud.isSignedIn()) { DP.AuthUI.open(); return; }
     if (typeof navigator !== 'undefined' && navigator.onLine === false) {
       DP.UI.toast('Sei offline: le modifiche restano sul dispositivo e partiranno al ritorno della connessione.', 'warn');
       return;
@@ -129,40 +128,21 @@ DP.App = (function () {
     if (res && res.ok) {
       DP.UI.toast('Sincronizzato. ' + res.pushed + ' inviate, ' + res.pulled + ' ricevute.', 'ok');
       refresh();
-    } else if (res && res.error && res.reason !== 'offline' && res.reason !== 'no-auth') {
+    } else if (res && res.error && res.reason !== 'offline') {
       DP.UI.toast(res.error, 'error');
     }
   }
 
-  async function logout() {
-    const yes = await DP.UI.confirm({
-      title: 'Uscire dall’account?',
-      message: 'Le misurazioni restano su questo dispositivo. Potrai rientrare quando vuoi: il diario locale non viene cancellato.',
-      confirmLabel: 'Esci',
-      cancelLabel: 'Annulla'
-    });
-    if (!yes) return;
-    const res = await DP.Cloud.signOut();
-    if (!res.ok) {
-      DP.UI.toast(res.error || 'Non sono riuscito a uscire.', 'error');
-      return;
-    }
-    DP.UI.toast('Sei uscito dall’account.', 'ok');
-    DP.UI.updateHeader();
-    refresh();
-  }
-
   async function removeCloudConfig() {
     const yes = await DP.UI.confirm({
-      title: 'Rimuovere la sincronizzazione?',
-      message: 'Il collegamento a Supabase viene rimosso da questo dispositivo. Le misurazioni locali restano; quelle nel cloud non vengono cancellate.',
-      confirmLabel: 'Rimuovi',
+      title: 'Scollegare GitHub?',
+      message: 'Il token GitHub viene dimenticato da questo dispositivo. Le misurazioni locali restano; il file nel repository privato non viene cancellato.',
+      confirmLabel: 'Scollega',
       danger: true
     });
     if (!yes) return;
-    try { await DP.Cloud.signOut(); } catch (e) { /* ignore */ }
     DP.Cloud.clearConfig();
-    DP.UI.toast('Configurazione rimossa. Ricarico l’app…', 'ok');
+    DP.UI.toast('Sincronizzazione scollegata. Ricarico l’app…', 'ok');
     setTimeout(function () { window.location.reload(); }, 700);
   }
 
@@ -177,7 +157,7 @@ DP.App = (function () {
       title: 'Cancellare tutte le misurazioni?',
       message: 'Verranno eliminate ' + active.length + ' ' +
         DP.Fmt.plural(active.length, 'misurazione', 'misurazioni') + ' dal diario' +
-        (signed ? ' e, al prossimo sync, anche dal tuo account Supabase' : ' su questo dispositivo') +
+        (signed ? ' e, al prossimo sync, anche dal repository GitHub privato' : ' su questo dispositivo') +
         '. Il profilo e il target restano. L’operazione non si può annullare: se vuoi conservare una copia, esporta prima il backup JSON.',
       confirmLabel: 'Cancella tutto',
       cancelLabel: 'Annulla',
@@ -197,23 +177,23 @@ DP.App = (function () {
   }
 
   async function clearCloudData() {
-    if (!DP.Cloud.isSignedIn()) { DP.AuthUI.open(); return; }
+    if (!DP.Cloud.configured()) { DP.AuthUI.open(); return; }
     const yes = await DP.UI.confirm({
-      title: 'Eliminare i dati dal cloud?',
-      message: 'Tutte le misurazioni e il profilo vengono eliminati dal tuo account Supabase e anche da questo dispositivo. Gli altri dispositivi collegati perderanno i dati al prossimo sync. L’operazione non si può annullare: esporta prima un backup se ti serve.',
-      confirmLabel: 'Elimina dal cloud',
+      title: 'Eliminare i dati da GitHub?',
+      message: 'Il file del diario viene eliminato dal repository GitHub privato e le misurazioni vengono cancellate anche da questo dispositivo. Gli altri dispositivi collegati perderanno i dati al prossimo sync. L’operazione non si può annullare: esporta prima un backup se ti serve.',
+      confirmLabel: 'Elimina da GitHub',
       cancelLabel: 'Annulla',
       danger: true
     });
     if (!yes) return;
     const res = await DP.Cloud.deleteCloudData();
     if (!res.ok) {
-      DP.UI.toast(res.error || 'Non sono riuscito a cancellare i dati dal cloud.', 'error');
+      DP.UI.toast(res.error || 'Non sono riuscito a cancellare i dati dal repository.', 'error');
       return;
     }
     DP.Store.setReadings([], 'cloud-clear');
     DP.Store.setSyncMeta({ lastSyncAt: null });
-    DP.UI.toast('Dati eliminati dal cloud e dal dispositivo.', 'ok');
+    DP.UI.toast('Dati eliminati da GitHub e dal dispositivo.', 'ok');
     refresh();
   }
 
@@ -347,9 +327,6 @@ DP.App = (function () {
         break;
       case 'remove-cloud-config':
         removeCloudConfig();
-        break;
-      case 'logout':
-        logout();
         break;
       case 'export-json':
         exportJson();
@@ -506,23 +483,14 @@ DP.App = (function () {
       }
     });
 
-    DP.Cloud.onAuth(function (event) {
-      if (event === 'recovery') {
-        DP.AuthUI.openRecovery();
-        return;
-      }
-      if (event === 'signed-in' || event === 'signed-out') {
-        DP.UI.updateHeader();
-        if (currentRoute === 'impostazioni') refresh();
-      }
-    });
-
-    DP.Cloud.init().catch(function () { /* stato già mostrato nell'interfaccia */ });
-    DP.Cloud.restoreSession().then(function (session) {
+    DP.Cloud.init().then(function () {
       DP.UI.setSyncStatus();
-      if (session) DP.Cloud.scheduleSync(600);
+      return DP.Cloud.restoreSession();
+    }).then(function (session) {
+      DP.UI.setSyncStatus();
+      if (session && DP.Store.settings().autoSync !== false) DP.Cloud.scheduleSync(800);
       if (currentRoute === 'impostazioni') refresh();
-    }).catch(function () { /* offline o libreria non disponibile */ });
+    }).catch(function () { /* offline o GitHub non raggiungibile */ });
   }
 
   // ---------- service worker ----------

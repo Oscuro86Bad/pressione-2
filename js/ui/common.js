@@ -41,7 +41,8 @@ DP.UI = (function () {
     pill: '<path d="M10.5 20.5l10-10a4.95 4.95 0 0 0-7-7l-10 10a4.95 4.95 0 0 0 7 7z"/><path d="M8.5 8.5l7 7"/>',
     home: '<path d="M3 11l9-8 9 8v10a1 1 0 0 1-1 1h-5v-6H9v6H4a1 1 0 0 1-1-1z"/>',
     menu: '<path d="M4 6h16M4 12h16M4 18h16"/>',
-    activity: '<path d="M3 12h4l3-8 4 16 3-8h4"/>'
+    activity: '<path d="M3 12h4l3-8 4 16 3-8h4"/>',
+    github: '<path d="M9 19c-5 1.5-5-2.5-7-3m14 6v-3.87a3.37 3.37 0 0 0-.94-2.61c3.14-.35 6.44-1.54 6.44-7A5.44 5.44 0 0 0 20 4.77 5.07 5.07 0 0 0 19.91 1S18.73.65 16 2.48a13.38 13.38 0 0 0-7 0C6.27.65 5.09 1 5.09 1A5.07 5.07 0 0 0 5 4.77a5.44 5.44 0 0 0-1.5 3.78c0 5.42 3.3 6.61 6.44 7A3.37 3.37 0 0 0 9 18.13V22"/>'
   };
 
   function icon(name, cls) {
@@ -149,7 +150,7 @@ DP.UI = (function () {
     chipEl.className = 'sync-chip sync-' + s.state;
     let title = s.message || '';
     if (s.lastSyncAt) title += ' · ultimo sync ' + DP.Fmt.timeAgo(s.lastSyncAt);
-    if (s.email) title += ' · ' + s.email;
+    if (s.login) title += ' · ' + s.login;
     chipEl.title = title || 'Sincronizzazione';
     chipEl.setAttribute('aria-label', 'Sincronizzazione: ' + (s.message || map[s.state] || ''));
   }

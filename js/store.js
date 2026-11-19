@@ -1,7 +1,7 @@
 /* ============================================================
    PRESSIONE 2.0 — archivio locale
-   I dati vivono in localStorage; se c'è un account collegato
-   vengono anche sincronizzati su Supabase (vedi cloud.js).
+   I dati vivono in localStorage; se c'è un repository GitHub
+   collegato vengono anche sincronizzati lì (vedi cloud.js).
    ============================================================ */
 window.DP = window.DP || {};
 
@@ -500,7 +500,7 @@ DP.Store = (function () {
       return { ok: false, error: 'Il backup non contiene misurazioni valide.' };
     }
 
-    // Segna come da sincronizzare: dopo il login finiranno nel cloud.
+    // Segna come da sincronizzare: finiranno nel repository al prossimo sync.
     incoming.forEach(function (r) {
       if (!DP.Fmt.isUuid(r.id)) r.id = DP.Fmt.uid();
       r.dirty = true;
